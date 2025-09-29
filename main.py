@@ -8,6 +8,9 @@ from datetime import datetime, timedelta
 import os
 import random
 import string
+# NEW IMPORT REQUIRED FOR CORS FIX
+from fastapi.middleware.cors import CORSMiddleware 
+
 
 # --- Configuration ---
 # Replace with your actual bot token
@@ -168,6 +171,30 @@ def generate_league_code(length=6):
 
 # --- API Setup ---
 app = FastAPI()
+
+
+# =======================================================================
+# >>> CRITICAL CORS FIX INSERTED HERE <<<
+# =======================================================================
+
+# 1. DEFINE YOUR FRONTEND ORIGINS
+# YOU MUST replace 'https://[YOUR_FRONTEND_URL]' with the actual URL 
+# of your deployed web app (e.g., your Netlify/Vercel/GitHub Pages domain).
+origins = [
+    "https://https://footyriddlesgame.vercel.app/", 
+    "http://localhost:10000", # Allows for local testing on the default port
+]
+
+# 2. ADD THE MIDDLEWARE TO THE APP
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"], # Allow all methods (POST, GET, PUT, etc.)
+    allow_headers=["*"], # Allow all headers 
+)
+
+# =======================================================================
 
 # --- CORE API Endpoints (Login and Profile - UNCHANGED) ---
 
