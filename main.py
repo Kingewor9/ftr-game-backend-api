@@ -177,13 +177,17 @@ app = FastAPI()
 # >>> CRITICAL CORS FIX INSERTED HERE <<<
 # =======================================================================
 
+
 # 1. DEFINE YOUR FRONTEND ORIGINS
-# YOU MUST replace 'https://[YOUR_FRONTEND_URL]' with the actual URL 
-# of your deployed web app (e.g., your Netlify/Vercel/GitHub Pages domain).
+# When deploying a Telegram Mini App on a phone, the origin (where the request comes from) 
+# is often an internal Telegram domain or can be masked. 
+# Allowing '*' is necessary for seamless operation in the Mini App environment.
 origins = [
-    "https://https://footyriddlesgame.vercel.app/", 
-    "http://localhost:10000", # Allows for local testing on the default port
+    "*", # Allow all origins for seamless Telegram Mini App deployment
 ]
+
+# Note: If deploying outside a test environment, you should tighten this to specific Telegram domains 
+# (e.g., 'https://web.telegram.org') or your specific frontend URL if possible.
 
 # 2. ADD THE MIDDLEWARE TO THE APP
 app.add_middleware(
@@ -193,6 +197,7 @@ app.add_middleware(
     allow_methods=["*"], # Allow all methods (POST, GET, PUT, etc.)
     allow_headers=["*"], # Allow all headers 
 )
+
 
 # =======================================================================
 
