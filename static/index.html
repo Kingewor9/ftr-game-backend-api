@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FTR League Game</title>
+    <!-- Mandatory script for Telegram Web Apps -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        /* CSS to match Telegram's theme and make it full screen */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--tg-theme-bg-color, #f4f4f4);
+            color: var(--tg-theme-text-color, #333);
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        .header {
+            background-color: var(--tg-theme-header-bg-color, #5865f2);
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-size: 1.2em;
+        }
+        .content {
+            padding: 20px;
+            flex-grow: 1;
+        }
+        .nav {
+            display: flex;
+            justify-content: space-around;
+            padding: 10px 0;
+            background-color: var(--tg-theme-bg-color, #fff);
+            border-top: 1px solid var(--tg-theme-secondary-bg-color, #ccc);
+        }
+        .nav-button {
+            background: none;
+            border: none;
+            color: var(--tg-theme-hint-color, #999);
+            cursor: pointer;
+            padding: 10px;
+            font-size: 0.9em;
+        }
+        .nav-button.active {
+            color: var(--tg-theme-link-color, #007bff);
+            font-weight: bold;
+        }
+        .card {
+            background-color: var(--tg-theme-secondary-bg-color, #fff);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">Footy Riddles</div>
+
+    <div class="content">
+        <div id="home-view">
+            <h2>Welcome!</h2>
+            <p id="username-display">User Loading...</p>
+            <div class="card">
+                <h3>Today's Quiz</h3>
+                <p id="quiz-status">Checking for daily quiz...</p>
+                <button id="start-quiz-btn" style="display: none;">Start Quiz</button>
+            </div>
+        </div>
+
+        <div id="league-view" style="display: none;">
+            <h2>My Leagues</h2>
+            <div id="leagues-list">Loading leagues...</div>
+            <button id="create-league-btn">Create New League</button>
+        </div>
+
+        <div id="profile-view" style="display: none;">
+            <h2>My Profile</h2>
+            <div id="profile-details">Loading profile...</div>
+        </div>
+    </div>
+
+    <div class="nav">
+        <button class="nav-button active" data-view="home">🏠 Home</button>
+        <button class="nav-button" data-view="league">🏆 Leagues</button>
+        <button class="nav-button" data-view="profile">👤 Profile</button>
+    </div>
+
+    <script>
+        // CRITICAL STEP 1: Replace this placeholder with your stable Render URL.
+        // Example: const API_URL = 'https://your-ftr-api.onrender.com';
+        const API_URL = ''; 
+        
+        //for pushing sake
+        const webApp = window.Telegram.WebApp;
+        let USER_ID = null;
+
+        // 1. Initialize the WebApp
+        if (webApp) {
+            webApp.ready();
+            webApp.expand(); // Use full screen
+            // Set Telegram's theme colors for a native look
+            if (webApp.themeParams) {
+                document.body.style.backgroundColor = webApp.themeParams.bg_color;
+                document.body.style.color = webApp.themeParams.text_color;
+            }
+        }
+
+        // --- Utility Functions ---
+        async function fetchAPI(endpoint, method = 'POST', data = {}) {
+            if (API_URL === '<<<PASTE_YOUR_LIVE_RENDER_URL_HERE>>>') {
+                webApp.showAlert("ERROR: API URL not set in the HTML file!");
+                return { error: 'API not configured' };
+            }
+
+            const url = `${API_URL}${endpoint}`;
+            
+            // Add the user's ID to the data payload for almost every request
+            if (USER_ID) {
+                data.telegram_id = USER_ID;
+            }
+
+            try {
+                const response = await fetch(url, {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                if (response.status === 404) {
+                    return { error: 'Not Found', status: 404 };
+                }
+
+                if (!response.ok) {
+                    const errorBody = await response.json().catch(() => response.text());
+                    throw new Error(`API Error ${response.status}: ${JSON.stringify(errorBody)}`);
+                }
+
+                return response.json();
+
+            } catch (error) {
+                console.error("Fetch API Error:", error);
+                webApp.showAlert(`API Request Failed: ${error.message}`);
+                return { error: error.message };
+            }
+        }
+
+        // --- 2. AUTHENTICATION (The first request) ---
+        async function authenticateUser() {
+            if (!webApp || !webApp.initData) {
+                document.getElementById('username-display').innerText = "Run this inside Telegram!";
+                return;
+            }
+
+            try {
+                // Send the raw initData as the body to the /auth/login endpoint
+                const loginUrl = `${API_URL}/auth/login`;
+                const response = await fetch(loginUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: webApp.initData 
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Login failed with status ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                // Set the global USER_ID from the response
+                USER_ID = data.telegram_id;
+                
+                document.getElementById('username-display').innerText = `Welcome, ${data.username || 'Player'}!`;
+                // Now that the user is logged in, load the main data
+                loadHomeData(); 
+                loadLeagues();
+
+            } catch (error) {
+                console.error("Authentication Error:", error);
+                document.getElementById('username-display').innerText = "Authentication Failed. See console.";
+                webApp.showAlert("Could not log you in. Please restart the bot.");
+            }
+        }
+
+        // --- 3. DATA LOADING FUNCTIONS ---
+        async function loadHomeData() {
+            // Check for the daily quiz
+            // Changed fetchAPI method to GET for this info endpoint
+            const quizData = await fetchAPI('/quiz/daily_quiz_info', 'GET', {}); 
+            const quizStatusElement = document.getElementById('quiz-status');
+            const startQuizBtn = document.getElementById('start-quiz-btn');
+
+            if (quizData.error || quizData.status === 404) {
+                quizStatusElement.innerText = "No daily quiz is currently active.";
+                startQuizBtn.style.display = 'none';
+            } else {
+                quizStatusElement.innerHTML = `<strong>${quizData.quiz_name}</strong> (${quizData.questions_count} Qs, ${quizData.points_per_question} pts/Q)`;
+                startQuizBtn.style.display = 'block';
+                // Attach the quiz starting function to the button
+                startQuizBtn.onclick = () => webApp.showAlert("Quiz starting logic goes here!"); 
+            }
+        }
+
+        async function loadLeagues() {
+            const leagueListElement = document.getElementById('leagues-list');
+            leagueListElement.innerText = "Fetching your leagues...";
+            
+            // Changed method to POST as most endpoints require the user ID payload
+            const data = await fetchAPI('/league/my_leagues', 'POST', {}); 
+            
+            if (data.error) {
+                leagueListElement.innerText = "Failed to load leagues.";
+                return;
+            }
+
+            if (data.my_leagues && data.my_leagues.length > 0) {
+                let html = '<ul>';
+                data.my_leagues.forEach(league => {
+                    html += `<li class="card">
+                        <strong>${league.league_name}</strong>
+                        <p>Rank: #${league.user_rank} | Points: ${league.user_points}</p>
+                        <button onclick="webApp.showAlert('View Table for ${league.league_name} logic goes here')">View Table</button>
+                    </li>`;
+                });
+                html += '</ul>';
+                leagueListElement.innerHTML = html;
+            } else {
+                leagueListElement.innerText = "You are not a member of any leagues yet. Create or Join one!";
+            }
+        }
+
+        // --- 4. VIEW SWITCHING LOGIC ---
+        document.querySelectorAll('.nav-button').forEach(button => {
+            button.addEventListener('click', (e) => {
+                const view = e.target.getAttribute('data-view');
+                document.getElementById('home-view').style.display = view === 'home' ? 'block' : 'none';
+                document.getElementById('league-view').style.display = view === 'league' ? 'block' : 'none';
+                document.getElementById('profile-view').style.display = view === 'profile' ? 'block' : 'none';
+
+                // Update active state
+                document.querySelectorAll('.nav-button').forEach(btn => btn.classList.remove('active'));
+                e.target.classList.add('active');
+            });
+        });
+        
+        // Initial call to start the process
+        authenticateUser();
+        
+    </script>
+</body>
+</html>

@@ -10,6 +10,9 @@ import random
 import string
 # NEW IMPORT REQUIRED FOR CORS FIX
 from fastapi.middleware.cors import CORSMiddleware 
+# >>> REQUIRED IMPORT FOR SERVING HTML FRONTEND <<<
+from fastapi.staticfiles import StaticFiles 
+
 
 
 # --- Configuration ---
@@ -197,6 +200,11 @@ app.add_middleware(
     allow_methods=["*"], # Allow all methods (POST, GET, PUT, etc.)
     allow_headers=["*"], # Allow all headers 
 )
+
+# 2. STATIC FILES MOUNT (This is where the magic happens)
+# This serves the index.html file from the 'static' directory when the user visits the root URL (/)
+# It is placed AFTER CORS but BEFORE your API routes.
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 
 # =======================================================================
