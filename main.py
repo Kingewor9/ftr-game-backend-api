@@ -119,26 +119,41 @@ league_db = {}
 
 
 # --- Helper Functions ---
-
 def validate_telegram_data(init_data: str) -> dict:
-    # (UNCHANGED validation logic)
+    # --- START DEBUGGING LOGS ---
+    print(f"\n[DEBUG] Raw init_data received: {init_data}")
+    # --- END DEBUGGING LOGS ---
+    
+    # 1. URL decode the input string (which is usually URL-encoded)
+    init_data_decoded = unquote_plus(init_data)
+    
+    # 2. Split into all parts
+    full_parts = init_data_decoded.split('&')
+    
+    # 3. Separate the hash from the data check string parts
     data_check_string_parts = []
     hash_value = ""
-    
-    init_data_list = sorted([item for item in init_data.split('&') if not item.startswith('hash')])
-    
-    for item in init_data_list:
-        if item.startswith('hash='):
-            hash_value = item[5:]
+
+    for part in full_parts:
+        if part.startswith('hash='):
+            # Found the hash value
+            hash_value = part[5:]
         else:
-            data_check_string_parts.append(item)
-    
+            # All other parts belong to the data check string
+            data_check_string_parts.append(part)
+
+    # 4. Sort the data components and join them with newline character
+    data_check_string_parts.sort()
     data_check_string = "\n".join(data_check_string_parts)
     
     # --- START DEBUGGING LOGS ---
+    if not hash_value:
+        print("[CRITICAL ERROR] Hash value was not found in the received data string.")
+        
     print(f"[DEBUG] Data Check String for Hashing: \n---BEGIN---\n{data_check_string}\n---END---")
     # --- END DEBUGGING LOGS ---
     
+    # 5. Calculate the expected hash
     secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
     
     calculated_hash = hmac.new(
@@ -147,8 +162,9 @@ def validate_telegram_data(init_data: str) -> dict:
         digestmod=hashlib.sha256
     ).hexdigest()
 
+    # 6. Compare hashes
     if calculated_hash != hash_value:
-         # --- START DEBUGGING LOGS ---
+        # --- START DEBUGGING LOGS ---
         print(f"[ERROR] Hash Mismatch Detected!")
         print(f"[ERROR] Calculated Hash: {calculated_hash}")
         print(f"[ERROR] Received Hash: {hash_value}")
@@ -159,16 +175,19 @@ def validate_telegram_data(init_data: str) -> dict:
     print(f"[SUCCESS] Hash validated successfully: {calculated_hash}")
     # --- END DEBUGGING LOGS ---
 
+
+    # 7. Extract and return user data
     user_data_str = ""
-    for part in init_data.split('&'):
+    for part in full_parts:
         if part.startswith('user='):
-            user_data_str = unquote_plus(part[5:])
+            user_data_str = part[5:]
             break
             
     if not user_data_str:
         raise HTTPException(status_code=400, detail="User data not found in initData.")
     
     try:
+        # Note: user_data_str should already be decoded by unquote_plus earlier
         user_info = json.loads(user_data_str)
         return user_info
     except json.JSONDecodeError:
