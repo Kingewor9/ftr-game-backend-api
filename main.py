@@ -22,7 +22,7 @@ BOT_TOKEN = "8384275400:AAGcl3BVdDx5Qo0S-uD8Jy1jynWB_gwGNMQ"
 ADMIN_TELEGRAM_ID = "1474715816" 
 # ---
 
-if BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
+if BOT_TOKEN == "8384275400:AAGcl3BVdDx5Qo0S-uD8Jy1jynWB_gwGNMQ":
     raise ValueError("Please replace 'YOUR_TELEGRAM_BOT_TOKEN' with your actual bot token.")
 if ADMIN_TELEGRAM_ID == "YOUR_ADMIN_TELEGRAM_ID":
     print("WARNING: ADMIN_TELEGRAM_ID is set to placeholder. Admin features will be restricted.")
