@@ -201,11 +201,6 @@ app.add_middleware(
     allow_headers=["*"], # Allow all headers 
 )
 
-# 2. STATIC FILES MOUNT (This is where the magic happens)
-# This serves the index.html file from the 'static' directory when the user visits the root URL (/)
-# It is placed AFTER CORS but BEFORE your API routes.
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
 
 # =======================================================================
 
@@ -685,3 +680,8 @@ async def search_leagues(search_data: LeagueSearch):
         "status": "success",
         "search_results": search_results
     }
+    
+    # 2. STATIC FILES MOUNT (This is where the magic happens)
+# This serves the index.html file from the 'static' directory when the user visits the root URL (/)
+# It is placed AFTER CORS but BEFORE your API routes.
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
