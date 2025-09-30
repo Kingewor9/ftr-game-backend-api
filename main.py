@@ -112,6 +112,7 @@ league_db = {}
 
 
 # --- Helper Functions ---
+
 def validate_telegram_data(init_data: str) -> dict:
     # --- START DEBUGGING LOGS ---
     print(f"\n[DEBUG] Raw init_data received: {init_data}")
@@ -123,14 +124,17 @@ def validate_telegram_data(init_data: str) -> dict:
     # 2. Split into all parts
     full_parts = init_data_decoded.split('&')
     
-    # 3. Separate the hash from the data check string parts
+    # 3. Separate the hash and signature from the data check string parts
     data_check_string_parts = []
     hash_value = ""
 
     for part in full_parts:
         if part.startswith('hash='):
-            # Found the hash value
+            # Found the hash value, we store it but do not include it in the parts list
             hash_value = part[5:]
+        elif part.startswith('signature='):
+            # The 'signature' must also be excluded from the data check string
+            continue
         else:
             # All other parts belong to the data check string
             data_check_string_parts.append(part)
@@ -143,10 +147,12 @@ def validate_telegram_data(init_data: str) -> dict:
     if not hash_value:
         print("[CRITICAL ERROR] Hash value was not found in the received data string.")
         
+    # We now log the data string used for hashing, which is crucial for debugging
     print(f"[DEBUG] Data Check String for Hashing: \n---BEGIN---\n{data_check_string}\n---END---")
     # --- END DEBUGGING LOGS ---
     
     # 5. Calculate the expected hash
+    # The key is derived from the bot token (sha256 hash of the token)
     secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
     
     calculated_hash = hmac.new(
@@ -168,11 +174,11 @@ def validate_telegram_data(init_data: str) -> dict:
     print(f"[SUCCESS] Hash validated successfully: {calculated_hash}")
     # --- END DEBUGGING LOGS ---
 
-
     # 7. Extract and return user data
     user_data_str = ""
     for part in full_parts:
         if part.startswith('user='):
+            # This part will be URL decoded implicitly by the initial unquote_plus
             user_data_str = part[5:]
             break
             
@@ -180,11 +186,22 @@ def validate_telegram_data(init_data: str) -> dict:
         raise HTTPException(status_code=400, detail="User data not found in initData.")
     
     try:
-        # Note: user_data_str should already be decoded by unquote_plus earlier
+        # We need to manually URL decode the user string *again* because the initial unquote_plus 
+        # decoded the entire string, but the content of the user= part (especially the JSON) 
+        # might need secondary decoding if the user data itself contains encoded characters.
+        # However, since the JSON structure is preserved, let's assume the outer unquote_plus is sufficient 
+        # unless JSON loading fails.
         user_info = json.loads(user_data_str)
         return user_info
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON in user data.")
+    except json.JSONDecodeError as e:
+        print(f"JSON decode error in user data: {e}")
+        # As a fallback, try to decode the user_data_str one more time
+        try:
+            user_info = json.loads(unquote_plus(user_data_str))
+            return user_info
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in user data.")
+
 
 def calculate_accuracy(correct, total):
     return round((correct / total) * 100) if total > 0 else 0
