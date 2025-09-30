@@ -135,6 +135,10 @@ def validate_telegram_data(init_data: str) -> dict:
     
     data_check_string = "\n".join(data_check_string_parts)
     
+    # --- START DEBUGGING LOGS ---
+    print(f"[DEBUG] Data Check String for Hashing: \n---BEGIN---\n{data_check_string}\n---END---")
+    # --- END DEBUGGING LOGS ---
+    
     secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
     
     calculated_hash = hmac.new(
@@ -144,7 +148,16 @@ def validate_telegram_data(init_data: str) -> dict:
     ).hexdigest()
 
     if calculated_hash != hash_value:
+         # --- START DEBUGGING LOGS ---
+        print(f"[ERROR] Hash Mismatch Detected!")
+        print(f"[ERROR] Calculated Hash: {calculated_hash}")
+        print(f"[ERROR] Received Hash: {hash_value}")
+        # --- END DEBUGGING LOGS ---
         raise HTTPException(status_code=403, detail="Invalid Telegram data hash.")
+    
+    # --- START DEBUGGING LOGS ---
+    print(f"[SUCCESS] Hash validated successfully: {calculated_hash}")
+    # --- END DEBUGGING LOGS ---
 
     user_data_str = ""
     for part in init_data.split('&'):
