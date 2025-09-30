@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 # --- Configuration ---
 # Replace with your actual bot token
-BOT_TOKEN = "8384275400:AAGcl3BVdDx5Qo0S-uD8Jy1jynWB_gwGNMQ" 
+BOT_TOKEN = "8384275400:AAHy82u4lVrt1M-UBSjs-nddRmcLqx3KACM" 
 # Define the admin's Telegram ID for exclusive access to admin endpoints
 ADMIN_TELEGRAM_ID = "1474715816" 
 
