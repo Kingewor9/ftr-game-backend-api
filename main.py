@@ -4,6 +4,7 @@ import json
 from urllib.parse import unquote_plus
 from fastapi import FastAPI, Request, HTTPException, Body
 from pydantic import BaseModel, Field
+from urllib.parse import unquote_plus, parse_qsl # <-- CRITICAL NEW IMPORT
 from datetime import datetime, timedelta
 import os
 import random
@@ -16,10 +17,12 @@ from fastapi.staticfiles import StaticFiles
 
 
 # --- Configuration ---
-# Replace with your actual bot token
-BOT_TOKEN = "8384275400:AAHy82u4lVrt1M-UBSjs-nddRmcLqx3KACM" 
+# CRITICAL: LOADED FROM ENVIRONMENT VARIABLE
+# Make absolutely sure TELEGRAM_BOT_TOKEN is set in your environment
+BOT_TOKEN = os.getenv ("8384275400:AAHy82u4lVrt1M-UBSjs-nddRmcLqx3KACM")
+
 # Define the admin's Telegram ID for exclusive access to admin endpoints
-ADMIN_TELEGRAM_ID = "1474715816" 
+ADMIN_TELEGRAM_ID = "1474715816"
 
 # --- Pydantic Data Models ---
 
@@ -113,94 +116,84 @@ league_db = {}
 
 # --- Helper Functions ---
 
+# !!! ROBUST AND REVISED AUTHENTICATION LOGIC !!!
 def validate_telegram_data(init_data: str) -> dict:
-    # --- START DEBUGGING LOGS ---
+    """
+    Validates the hash of the received Telegram Mini App init data.
+    Uses urllib.parse.parse_qsl for reliable key-value pair extraction 
+    and reconstruction of the data check string.
+    """
+    
     print(f"\n[DEBUG] Raw init_data received: {init_data}")
-    # --- END DEBUGGING LOGS ---
     
-    # 1. URL decode the input string (which is usually URL-encoded)
-    init_data_decoded = unquote_plus(init_data)
+    if not BOT_TOKEN or BOT_TOKEN == "FALLBACK_TOKEN_FOR_TESTING_ONLY":
+        print("[FATAL ERROR] Cannot validate hash: BOT_TOKEN is missing or a fallback.")
+        raise HTTPException(status_code=500, detail="Server misconfiguration: Telegram Bot Token is missing.")
+
+    # 1. Decode and parse the query string into a list of (key, value) tuples
+    # parse_qsl automatically handles URL decoding
+    params = parse_qsl(init_data, keep_blank_values=True, encoding='utf-8')
     
-    # 2. Split into all parts
-    full_parts = init_data_decoded.split('&')
-    
-    # 3. Separate the hash and signature from the data check string parts
-    data_check_string_parts = []
     hash_value = ""
+    data_check_string_parts = []
+    user_data_str = ""
 
-    for part in full_parts:
-        if part.startswith('hash='):
-            # Found the hash value, we store it but do not include it in the parts list
-            hash_value = part[5:]
-        elif part.startswith('signature='):
-            # The 'signature' must also be excluded from the data check string
-            continue
+    # 2. Extract hash and build the data check list
+    for key, value in params:
+        if key == 'hash':
+            hash_value = value
         else:
-            # All other parts belong to the data check string
-            data_check_string_parts.append(part)
+            # All other parameters form the data check string
+            data_check_string_parts.append(f"{key}={value}")
+            if key == 'user':
+                user_data_str = value
 
-    # 4. Sort the data components and join them with newline character
+    if not hash_value:
+        print("[CRITICAL ERROR] Hash value was not found in the received data string.")
+        raise HTTPException(status_code=400, detail="Missing Telegram data hash.")
+
+    if not user_data_str:
+        print("[CRITICAL ERROR] User data was not found in the received data string.")
+        raise HTTPException(status_code=400, detail="Missing Telegram user data.")
+        
+    # 3. Sort the parts alphabetically and join them with a newline (\n)
     data_check_string_parts.sort()
     data_check_string = "\n".join(data_check_string_parts)
     
-    # --- START DEBUGGING LOGS ---
-    if not hash_value:
-        print("[CRITICAL ERROR] Hash value was not found in the received data string.")
-        
-    # We now log the data string used for hashing, which is crucial for debugging
+    # --- START DIAGNOSTIC LOGS ---
+    print(f"[DIAGNOSTIC] Bot Token Length: {len(BOT_TOKEN)}")
+    print(f"[DIAGNOSTIC] First 5 Chars of Token: {BOT_TOKEN[:5]}...")
     print(f"[DEBUG] Data Check String for Hashing: \n---BEGIN---\n{data_check_string}\n---END---")
-    # --- END DEBUGGING LOGS ---
+    # --- END DIAGNOSTIC LOGS ---
     
-    # 5. Calculate the expected hash
+    # 4. Calculate the expected hash
     # The key is derived from the bot token (sha256 hash of the token)
     secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
     
     calculated_hash = hmac.new(
         secret_key,
-        msg=data_check_string.encode(),
+        msg=data_check_string.encode('utf-8'),
         digestmod=hashlib.sha256
     ).hexdigest()
 
-    # 6. Compare hashes
+    # 5. Compare hashes
     if calculated_hash != hash_value:
-        # --- START DEBUGGING LOGS ---
         print(f"[ERROR] Hash Mismatch Detected!")
         print(f"[ERROR] Calculated Hash: {calculated_hash}")
         print(f"[ERROR] Received Hash: {hash_value}")
-        # --- END DEBUGGING LOGS ---
         raise HTTPException(status_code=403, detail="Invalid Telegram data hash.")
     
-    # --- START DEBUGGING LOGS ---
+    # --- SUCCESS LOG ---
     print(f"[SUCCESS] Hash validated successfully: {calculated_hash}")
-    # --- END DEBUGGING LOGS ---
 
-    # 7. Extract and return user data
-    user_data_str = ""
-    for part in full_parts:
-        if part.startswith('user='):
-            # This part will be URL decoded implicitly by the initial unquote_plus
-            user_data_str = part[5:]
-            break
-            
-    if not user_data_str:
-        raise HTTPException(status_code=400, detail="User data not found in initData.")
-    
+    # 6. Extract user info
     try:
-        # We need to manually URL decode the user string *again* because the initial unquote_plus 
-        # decoded the entire string, but the content of the user= part (especially the JSON) 
-        # might need secondary decoding if the user data itself contains encoded characters.
-        # However, since the JSON structure is preserved, let's assume the outer unquote_plus is sufficient 
-        # unless JSON loading fails.
-        user_info = json.loads(user_data_str)
+        # User data must be URL decoded before JSON parsing
+        user_info = json.loads(unquote_plus(user_data_str))
         return user_info
     except json.JSONDecodeError as e:
         print(f"JSON decode error in user data: {e}")
-        # As a fallback, try to decode the user_data_str one more time
-        try:
-            user_info = json.loads(unquote_plus(user_data_str))
-            return user_info
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid JSON in user data.")
+        raise HTTPException(status_code=400, detail="Invalid JSON in user data.")
 
 
 def calculate_accuracy(correct, total):
