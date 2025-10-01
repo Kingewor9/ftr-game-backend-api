@@ -14,8 +14,6 @@ from fastapi.middleware.cors import CORSMiddleware
 # >>> REQUIRED IMPORT FOR SERVING HTML FRONTEND <<<
 from fastapi.staticfiles import StaticFiles 
 
-
-
 # --- Configuration ---
 # CRITICAL: LOADED FROM ENVIRONMENT VARIABLE
 # Make absolutely sure TELEGRAM_BOT_TOKEN is set in your environment
@@ -23,8 +21,6 @@ BOT_TOKEN = os.getenv ("8384275400:AAHy82u4lVrt1M-UBSjs-nddRmcLqx3KACM")
 
 if not BOT_TOKEN:
     print("[CRITICAL WARNING] BOT_TOKEN environment variable is not set. Authentication will fail.")
-    BOT_TOKEN = "FALLBACK_TOKEN_FOR_TESTING_ONLY"
-
 
 # Define the admin's Telegram ID for exclusive access to admin endpoints
 ADMIN_TELEGRAM_ID = "1474715816"
@@ -119,6 +115,8 @@ league_db = {}
 # }
 
 
+
+
 # --- Helper Functions ---
 
 # !!! ROBUST AND REVISED AUTHENTICATION LOGIC !!!
@@ -131,8 +129,9 @@ def validate_telegram_data(init_data: str) -> dict:
     
     print(f"\n[DEBUG] Raw init_data received: {init_data}")
     
-    if not BOT_TOKEN or BOT_TOKEN == "FALLBACK_TOKEN_FOR_TESTING_ONLY":
-        print("[FATAL ERROR] Cannot validate hash: BOT_TOKEN is missing or a fallback.")
+    # NOTE: Checks if BOT_TOKEN is None (meaning it wasn't loaded from the environment)
+    if not BOT_TOKEN:
+        print("[FATAL ERROR] Cannot validate hash: BOT_TOKEN is missing (Value is None).")
         raise HTTPException(status_code=500, detail="Server misconfiguration: Telegram Bot Token is missing.")
 
     # 1. Decode and parse the query string into a list of (key, value) tuples
