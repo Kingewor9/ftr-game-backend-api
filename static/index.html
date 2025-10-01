@@ -109,47 +109,68 @@
             }
         }
 
-        // --- Utility Functions ---
+       
+        // --- Utility Functions (FIXED to prevent 'Request with GET/HEAD method cannot have body' error) ---
         async function fetchAPI(endpoint, method = 'POST', data = {}) {
-            if (API_URL === '<<<PASTE_YOUR_LIVE_RENDER_URL_HERE>>>') {
-                webApp.showAlert("ERROR: API URL not set in the HTML file!");
-                return { error: 'API not configured' };
-            }
-
             const url = `${API_URL}${endpoint}`;
             
-            // Add the user's ID to the data payload for almost every request
-            if (USER_ID) {
-                data.telegram_id = USER_ID;
+            // Define options common to all requests
+            let fetchOptions = {
+                method: method,
+            };
+
+            // 1. Prepare data payload
+            let finalData = { ...data }; // Clone data object
+
+            // Add the user's ID to the data payload for almost every request except login
+            if (USER_ID && endpoint !== '/auth/login') {
+                finalData.telegram_id = USER_ID;
             }
 
+            // 2. Determine if the method allows a request body
+            const isBodyAllowed = !['GET', 'HEAD'].includes(method.toUpperCase());
+            
+            if (isBodyAllowed) {
+                // Only set headers and body if the method requires them
+                fetchOptions.headers = { 
+                    'Content-Type': 'application/json' 
+                };
+                fetchOptions.body = JSON.stringify(finalData);
+            }
+            // For GET/HEAD requests, the body property will be omitted entirely, fixing the client error.
+
             try {
-                const response = await fetch(url, {
-                    method: method,
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(data)
-                });
+                const response = await fetch(url, fetchOptions);
 
                 if (response.status === 404) {
-                    return { error: 'Not Found', status: 404 };
+                    return { error: 'Endpoint Not Found', status: 404 };
                 }
 
                 if (!response.ok) {
                     const errorBody = await response.json().catch(() => response.text());
-                    throw new Error(`API Error ${response.status}: ${JSON.stringify(errorBody)}`);
+                    
+                    // Improved error messaging for the 422 error (your current problem)
+                    let errorMessage = `API Error ${response.status} on ${endpoint}: `;
+                    if (response.status === 422) {
+                        const detail = typeof errorBody === 'object' ? JSON.stringify(errorBody.detail) : errorBody;
+                        errorMessage = `API Validation Failed (422) on ${endpoint}. Check your FastAPI Pydantic model. Server details: ${detail}`;
+                    } else {
+                        errorMessage += JSON.stringify(errorBody);
+                    }
+                    
+                    webApp.showAlert(errorMessage);
+                    throw new Error(errorMessage);
                 }
 
                 return response.json();
 
             } catch (error) {
                 console.error("Fetch API Error:", error);
-                webApp.showAlert(`API Request Failed: ${error.message}`);
+                webApp.showAlert(`Network Request Failed: ${error.message}`);
                 return { error: error.message };
             }
         }
-
+        
         // --- 2. AUTHENTICATION (The first request) ---
         async function authenticateUser() {
             if (!webApp || !webApp.initData) {
