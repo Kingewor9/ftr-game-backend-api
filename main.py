@@ -8,16 +8,26 @@ from urllib.parse import unquote_plus, parse_qsl # <-- CRITICAL NEW IMPORT
 from datetime import datetime, timedelta
 import os
 import random
+import logging
 import string
 # NEW IMPORT REQUIRED FOR CORS FIX
 from fastapi.middleware.cors import CORSMiddleware 
 # >>> REQUIRED IMPORT FOR SERVING HTML FRONTEND <<<
-from fastapi.staticfiles import StaticFiles 
+from fastapi.staticfiles import StaticFiles
+from typing import Optional # Required for Python 3.9+ type hinting
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 # CRITICAL: LOADED FROM ENVIRONMENT VARIABLE
 # Make absolutely sure TELEGRAM_BOT_TOKEN is set in your environment
-BOT_TOKEN = os.getenv ("8384275400:AAHy82u4lVrt1M-UBSjs-nddRmcLqx3KACM")
+BOT_TOKEN: Optional [str] = os.getenv ("8384275400:AAHy82u4lVrt1M-UBSjs-nddRmcLqx3KACM")
+if not BOT_TOKEN:
+    logger.error("[FATAL ERROR] Cannot proceed: BOT_TOKEN environment variable is NOT set. Hash validation will fail.")
+else:
+    logger.info(f"[DIAGNOSTIC] BOT_TOKEN successfully loaded. Length: {len(BOT_TOKEN)}.")
 
 # Define the admin's Telegram ID for exclusive access to admin endpoints
 ADMIN_TELEGRAM_ID = "1474715816"
@@ -116,23 +126,21 @@ league_db = {}
 
 # --- Helper Functions ---
 
-# !!! ROBUST AND REVISED AUTHENTICATION LOGIC !!!
+
+# !!! CORRECTED AUTHENTICATION LOGIC !!!
 def validate_telegram_data(init_data: str) -> dict:
     """
-    Validates the hash of the received Telegram Mini App init data.
-    Uses urllib.parse.parse_qsl for reliable key-value pair extraction 
-    and reconstruction of the data check string.
+    Validates the hash of the received Telegram Mini App init data using the 
+    required two-step HMAC-SHA256 process based on Telegram documentation.
     """
     
     print(f"\n[DEBUG] Raw init_data received: {init_data}")
     
-    # NOTE: Checks if BOT_TOKEN is None (meaning it wasn't loaded from the environment)
     if not BOT_TOKEN:
         print("[FATAL ERROR] Cannot validate hash: BOT_TOKEN is missing (Value is None).")
         raise HTTPException(status_code=500, detail="Server misconfiguration: Telegram Bot Token is missing.")
 
     # 1. Decode and parse the query string into a list of (key, value) tuples
-    # parse_qsl automatically handles URL decoding
     params = parse_qsl(init_data, keep_blank_values=True, encoding='utf-8')
     
     hash_value = ""
@@ -144,7 +152,6 @@ def validate_telegram_data(init_data: str) -> dict:
         if key == 'hash':
             hash_value = value
         else:
-            # All other parameters form the data check string
             data_check_string_parts.append(f"{key}={value}")
             if key == 'user':
                 user_data_str = value
@@ -167,13 +174,19 @@ def validate_telegram_data(init_data: str) -> dict:
     print(f"[DEBUG] Data Check String for Hashing: \n---BEGIN---\n{data_check_string}\n---END---")
     # --- END DIAGNOSTIC LOGS ---
     
-    # 4. Calculate the expected hash
-    # The key is derived from the bot token (sha256 hash of the token)
-    secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
+    # 4. Calculate the expected hash (Two-step process implemented here)
     
+    # Step 1: Calculate the secret key (HMAC-SHA256 of 'WebAppData' key applied to the Bot Token)
+    secret_key = hmac.new(
+        key="WebAppData".encode('utf8'), 
+        msg=BOT_TOKEN.encode('utf8'), 
+        digestmod=hashlib.sha256
+    ).digest()
+
+    # Step 2: Calculate the final hash (HMAC-SHA256 of the data check string applied to the secret key)
     calculated_hash = hmac.new(
         secret_key,
-        msg=data_check_string.encode('utf-8'),
+        msg=data_check_string.encode('utf8'),
         digestmod=hashlib.sha256
     ).hexdigest()
 
@@ -189,7 +202,6 @@ def validate_telegram_data(init_data: str) -> dict:
 
     # 6. Extract user info
     try:
-        # User data must be URL decoded before JSON parsing
         user_info = json.loads(unquote_plus(user_data_str))
         return user_info
     except json.JSONDecodeError as e:
