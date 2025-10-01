@@ -21,6 +21,11 @@ from fastapi.staticfiles import StaticFiles
 # Make absolutely sure TELEGRAM_BOT_TOKEN is set in your environment
 BOT_TOKEN = os.getenv ("8384275400:AAHy82u4lVrt1M-UBSjs-nddRmcLqx3KACM")
 
+if not BOT_TOKEN:
+    print("[CRITICAL WARNING] BOT_TOKEN environment variable is not set. Authentication will fail.")
+    BOT_TOKEN = "FALLBACK_TOKEN_FOR_TESTING_ONLY"
+
+
 # Define the admin's Telegram ID for exclusive access to admin endpoints
 ADMIN_TELEGRAM_ID = "1474715816"
 
