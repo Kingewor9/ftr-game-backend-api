@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # --- Configuration ---
 # CRITICAL: LOADED FROM ENVIRONMENT VARIABLE
 # Make absolutely sure TELEGRAM_BOT_TOKEN is set in your environment
-BOT_TOKEN: Optional [str] = os.getenv ("8384275400:AAHy82u4lVrt1M-UBSjs-nddRmcLqx3KACM")
+BOT_TOKEN: Optional [str] = os.getenv ("BOT_TOKEN")
 if not BOT_TOKEN:
     logger.error("[FATAL ERROR] Cannot proceed: BOT_TOKEN environment variable is NOT set. Hash validation will fail.")
 else:
