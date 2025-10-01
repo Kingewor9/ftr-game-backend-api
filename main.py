@@ -21,6 +21,8 @@ BOT_TOKEN = os.getenv ("8384275400:AAHy82u4lVrt1M-UBSjs-nddRmcLqx3KACM")
 
 if not BOT_TOKEN:
     print("[CRITICAL WARNING] BOT_TOKEN environment variable is not set. Authentication will fail.")
+     # ADDED THIS BLOCK FOR IMMEDIATE DIAGNOSIS
+    print(f"[RENDER DIAGNOSTIC] BOT_TOKEN successfully loaded. Length: {len(BOT_TOKEN)}. First 5 chars: {BOT_TOKEN[:5]}...")
 
 # Define the admin's Telegram ID for exclusive access to admin endpoints
 ADMIN_TELEGRAM_ID = "1474715816"
