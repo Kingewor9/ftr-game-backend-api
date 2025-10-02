@@ -187,7 +187,7 @@
             const isBodyAllowed = !['GET', 'HEAD'].includes(methodUpper);
             
             if (isBodyAllowed) {
-                // For GET requests, query parameters are used. For POST/PUT, body is used.
+                // For POST/PUT, body is used.
                 fetchOptions.headers = { 
                     'Content-Type': 'application/json' 
                 };
@@ -258,7 +258,7 @@
 
                 const data = await response.json();
                 
-                // V13: ROBUST DEEP ID EXTRACTION
+                // ROBUST DEEP ID EXTRACTION
                 const telegramId = findIdRecursively(data);
 
                 if (!telegramId) {
@@ -293,16 +293,17 @@
         async function loadHomeData() {
             document.getElementById('quiz-status').innerText = "Checking for daily quiz...";
             
-            // V14 FIX: Using a trailing slash to resolve potential 404 issue.
-            const quizData = await fetchAPI('/quiz/daily_quiz_info/', 'GET', {}); 
+            // V15 FIX: Revert to no trailing slash for the quiz endpoint based on 404 feedback.
+            const quizEndpoint = '/quiz/daily_quiz_info'; 
+            const quizData = await fetchAPI(quizEndpoint, 'GET', {}); 
             
             const quizStatusElement = document.getElementById('quiz-status');
             const startQuizBtn = document.getElementById('start-quiz-btn');
 
             if (quizData.error) {
-                 // Check for specific 404 to provide a helpful message
-                if (quizData.error.includes("404: Endpoint /quiz/daily_quiz_info/ Not Found")) {
-                    quizStatusElement.innerHTML = "<strong>Error:</strong> Daily quiz endpoint not found (404). Check your backend URL for '/quiz/daily_quiz_info/'.";
+                 // Update the error message to be more explicit about the exact path used
+                if (quizData.error.includes("404: Endpoint /quiz/daily_quiz_info Not Found")) {
+                    quizStatusElement.innerHTML = `<strong>Error:</strong> Daily quiz endpoint not found (404). Please verify your backend path for <code>${quizEndpoint}</code>.`;
                 } else {
                     quizStatusElement.innerText = "Error loading daily quiz data.";
                 }
