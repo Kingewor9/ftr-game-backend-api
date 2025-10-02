@@ -233,19 +233,10 @@
             }
         }
 
+         // Removed the wait loop since we now call this function after authentication is complete
         async function loadLeagues() {
             const leagueListElement = document.getElementById('leagues-list');
             leagueListElement.innerText = "Fetching your leagues...";
-
-                        // CRITICAL FIX: Defensive wait loop to ensure USER_ID is set before fetching
-            let attempts = 0;
-            while (!USER_ID && attempts < 10) {
-                await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
-                attempts++;
-                if (attempts === 5) {
-                    leagueListElement.innerText = "Still waiting for user ID...";
-                }
-            }
 
             if (!USER_ID) {
                 leagueListElement.innerText = "Error: Could not retrieve user ID after login.";
@@ -278,7 +269,21 @@
             }
         }
 
-        // --- 4. VIEW SWITCHING LOGIC ---
+        // --- 4. NEW SEQUENTIAL APPLICATION INIT FLOW ---
+        async function initApp() {
+            const userId = await authenticateUser();
+
+            if (userId) {
+                // Only load data if authentication succeeded and USER_ID is set globally
+                loadHomeData(); 
+                loadLeagues();
+            } else {
+                // If authentication failed, display the error in the leagues section too
+                document.getElementById('leagues-list').innerText = "Authentication failed. Cannot load leagues.";
+            }
+        }
+        
+        // --- 5. VIEW SWITCHING LOGIC ---
         document.querySelectorAll('.nav-button').forEach(button => {
             button.addEventListener('click', (e) => {
                 const view = e.target.getAttribute('data-view');
