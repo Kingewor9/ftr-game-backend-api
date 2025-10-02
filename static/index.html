@@ -88,7 +88,6 @@
 
         <div id="league-view" style="display: none;">
             <h2>My Leagues</h2>
-            <!-- Initial state: show authentication is needed -->
             <div id="leagues-list">Waiting for user authentication...</div>
             <button id="create-league-btn" class="tg-button">Create New League</button>
         </div>
@@ -109,7 +108,6 @@
         const API_URL = ''; // Platform will proxy this
         
         const webApp = window.Telegram.WebApp;
-        // REMOVED: let USER_ID = null; // No longer needed as we use the DOM state
 
         // 1. Initialize the WebApp
         if (webApp) {
@@ -131,7 +129,7 @@
             return idInput ? idInput.value : null; 
         }
 
-        // --- Utility Functions (Fix for 422 with Diagnostics) ---
+        // --- Utility Functions (Fixed for String Type and Diagnostics) ---
         async function fetchAPI(endpoint, method = 'POST', data = {}) {
             const url = `${API_URL}${endpoint}`;
             const methodUpper = method.toUpperCase();
@@ -141,12 +139,10 @@
             
             const currentUserId = getUserId(); // <-- Read persistent ID here
 
-            // CRITICAL: Ensure telegram_id is added to finalData before stringifying
-            // This is how the Leagues API knows who you are.
+            // CRITICAL FIX: The backend expects telegram_id as a string.
             if (currentUserId && endpoint !== '/auth/login') {
-                // Add or overwrite the telegram_id key with the user's ID as an integer
-                // The backend requires it to be sent as an integer type, but the fetch body needs a string, so we use Number()
-                finalData.telegram_id = Number(currentUserId); 
+                // We use the ID as a string, no Number() casting.
+                finalData.telegram_id = currentUserId; 
             }
 
             // Determine if the method allows a request body
@@ -154,12 +150,12 @@
             
             if (isBodyAllowed) {
                 // *** DIAGNOSTIC LOGGING ***
-                console.log(`[DEBUG] Sending POST body to ${endpoint}:`, finalData); 
+                // This log will show if telegram_id is null, a number, or a string
+                console.log(`[DEBUG] Sending POST body to ${endpoint}:`, finalData, `(Type of telegram_id: ${typeof finalData.telegram_id})`); 
                 
                 fetchOptions.headers = { 
                     'Content-Type': 'application/json' 
                 };
-                // Use finalData directly, which now includes telegram_id if currentUserId is set
                 fetchOptions.body = JSON.stringify(finalData);
             }
             
@@ -199,12 +195,13 @@
             }
         }
 
-        // --- 2. AUTHENTICATION ---
+        // --- 2. AUTHENTICATION (Enhanced Diagnostics) ---
         async function authenticateUser() {
-            document.getElementById('username-display').innerText = "Authenticating...";
+            const displayElement = document.getElementById('username-display');
+            displayElement.innerText = "Authenticating...";
 
             if (!webApp || !webApp.initData) {
-                document.getElementById('username-display').innerText = "Run this inside Telegram!";
+                displayElement.innerText = "Run this inside Telegram!";
                 return null;
             }
 
@@ -224,19 +221,28 @@
 
                 const data = await response.json();
                 
-                const telegramId = String(data.telegram_id);
+                // Ensure telegram_id is present in the response
+                if (!data || !data.telegram_id) {
+                     console.error("[AUTH ERROR] Successful 200 response, but telegram_id is missing in JSON payload:", data);
+                     displayElement.innerText = "Authentication Failed: ID missing from server response.";
+                     return null;
+                }
                 
-                // CRITICAL FIX: Store ID persistently in the hidden DOM field
+                const telegramId = String(data.telegram_id); // Ensure it's always a string
+                
+                // CRITICAL: Store ID persistently in the hidden DOM field
                 document.getElementById('auth-telegram-id').value = telegramId;
                 
                 // *** DISPLAY USER_ID FOR DEBUGGING ***
-                document.getElementById('username-display').innerHTML = `Welcome, ${data.username || 'Player'}! (ID: <strong>${telegramId}</strong>)`;
+                displayElement.innerHTML = `Welcome, ${data.username || 'Player'}! (ID: <strong>${telegramId}</strong>)`;
+                
+                console.log(`[AUTH SUCCESS] ID ${telegramId} stored in DOM state and displayed.`);
                 
                 return telegramId;
                 
             } catch (error) {
                 console.error("Authentication Error:", error);
-                document.getElementById('username-display').innerText = "Authentication Failed. See console.";
+                displayElement.innerText = "Authentication Failed. See console.";
                 webApp.showAlert("Could not log you in. Please restart the bot.");
                 return null;
             }
@@ -264,7 +270,6 @@
             const leagueListElement = document.getElementById('leagues-list');
             const currentUserId = getUserId(); // <-- Read persistent ID here
             
-            // Re-check ID just before sending the request
             if (!currentUserId) {
                 console.error("FATAL: User ID missing inside loadLeagues().");
                 leagueListElement.innerText = "Error: Authentication token missing. Please refresh the app.";
@@ -273,7 +278,7 @@
             
             leagueListElement.innerText = "Fetching your leagues...";
 
-            // fetchAPI will automatically include the ID now
+            // fetchAPI will automatically include the string ID now
             const data = await fetchAPI('/league/my_leagues', 'POST', {}); 
             
             if (data.error) {
@@ -313,14 +318,13 @@
              `;
         }
         
-        // --- 4. NEW SEQUENTIAL APPLICATION INIT FLOW ---
+        // --- 4. APPLICATION INIT FLOW ---
         async function initApp() {
             const userId = await authenticateUser();
 
             if (userId) {
                 loadHomeData(); 
             } else {
-                // If authentication fails, we explicitly fail the leagues section too.
                 document.getElementById('leagues-list').innerText = "Authentication failed. Cannot load leagues.";
             }
         }
@@ -339,7 +343,7 @@
                 document.querySelectorAll('.nav-button').forEach(btn => btn.classList.remove('active'));
                 e.target.classList.add('active');
                 
-                // 3. Load data based on view, but ONLY if ID is known
+                // 3. Load data based on view
                 const currentUserId = getUserId(); // <-- Read persistent ID here
 
                 if (view === 'league') {
@@ -350,7 +354,7 @@
                         loadLeagues(); // Load leagues on demand
                     } else {
                         document.getElementById('leagues-list').innerText = "Authentication failed. Please refresh the app.";
-                        console.error("User ID was null upon clicking Leagues tab, despite successful login.");
+                        console.error("User ID was null upon clicking Leagues tab.");
                     }
                 } else if (view === 'profile') {
                     if (currentUserId) {
