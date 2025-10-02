@@ -238,8 +238,10 @@
             const leagueListElement = document.getElementById('leagues-list');
             leagueListElement.innerText = "Fetching your leagues...";
 
+            // Re-check USER_ID just before sending the request
             if (!USER_ID) {
-                leagueListElement.innerText = "Error: Could not retrieve user ID after login.";
+                console.error("FATAL: USER_ID is null inside loadLeagues(). This should not happen if called correctly.");
+                leagueListElement.innerText = "Error: Authentication token missing. Please refresh the app.";
                 return;
             }
 
@@ -298,10 +300,14 @@
                 
                 // 3. Load data based on view, but ONLY if USER_ID is known
                 if (view === 'league') {
+                    // *** NEW CRITICAL DEBUG LOG ***
+                    console.log(`[CLICK DEBUG] User ID check on Leagues click: ${USER_ID}`);
+                    
                     if (USER_ID) {
                         loadLeagues(); // Load leagues on demand
                     } else {
                         document.getElementById('leagues-list').innerText = "Authentication failed. Please refresh the app.";
+                        console.error("User ID was null upon clicking Leagues tab, despite successful login.");
                     }
                 } else if (view === 'profile') {
                     if (USER_ID) {
