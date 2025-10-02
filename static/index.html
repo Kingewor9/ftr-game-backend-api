@@ -274,31 +274,47 @@
             const userId = await authenticateUser();
 
             if (userId) {
-                // Only load data if authentication succeeded and USER_ID is set globally
+                // Only load home data initially. Leagues are loaded on tab click.
                 loadHomeData(); 
-                loadLeagues();
             } else {
-                // If authentication failed, display the error in the leagues section too
+                // If authentication failed, ensure all sections show an error state
                 document.getElementById('leagues-list').innerText = "Authentication failed. Cannot load leagues.";
             }
         }
-        
+
         // --- 5. VIEW SWITCHING LOGIC ---
         document.querySelectorAll('.nav-button').forEach(button => {
             button.addEventListener('click', (e) => {
                 const view = e.target.getAttribute('data-view');
+                
+                // 1. Switch visibility
                 document.getElementById('home-view').style.display = view === 'home' ? 'block' : 'none';
                 document.getElementById('league-view').style.display = view === 'league' ? 'block' : 'none';
                 document.getElementById('profile-view').style.display = view === 'profile' ? 'block' : 'none';
-
-                // Update active state
+                
+                // 2. Update active state
                 document.querySelectorAll('.nav-button').forEach(btn => btn.classList.remove('active'));
                 e.target.classList.add('active');
+                
+                // 3. Load data based on view, but ONLY if USER_ID is known
+                if (view === 'league') {
+                    if (USER_ID) {
+                        loadLeagues(); // Load leagues on demand
+                    } else {
+                        document.getElementById('leagues-list').innerText = "Authentication failed. Please refresh the app.";
+                    }
+                } else if (view === 'profile') {
+                    if (USER_ID) {
+                        loadProfileData();
+                    } else {
+                        document.getElementById('profile-details').innerText = "Authentication failed. Please refresh the app.";
+                    }
+                }
             });
         });
         
         // Initial call to start the process
-        authenticateUser();
+        initApp();
         
     </script>
 </body>
