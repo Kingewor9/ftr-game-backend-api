@@ -140,7 +140,7 @@
         }
 
         // --- Utility Functions ---
-        /** * Recursively searches the response object for any key named 'id', 'user_id', or 'telegram_id'
+        /** Recursively searches the response object for any key named 'id', 'user_id', or 'telegram_id'
          * and returns its value if it looks like a numeric ID.
          */
         function findIdRecursively(obj, targetKeys = ['id', 'user_id', 'uid', 'telegram_id']) {
@@ -258,7 +258,7 @@
 
                 const data = await response.json();
                 
-                // *** V13: ROBUST DEEP ID EXTRACTION ***
+                // V13: ROBUST DEEP ID EXTRACTION
                 const telegramId = findIdRecursively(data);
 
                 if (!telegramId) {
@@ -277,7 +277,7 @@
                 // SUCCESS: Display only the welcome message (no ID)
                 displayElement.innerHTML = `Welcome back, <strong>${webApp?.initDataUnsafe?.user?.first_name || 'Player'}</strong>!`;
                 
-                console.log(`[AUTH SUCCESS] User ID ${telegramId} successfully extracted and stored.`);
+                console.log(`[AUTH SUCCESS] User ID successfully extracted and stored.`);
                 
                 return telegramId;
                 
@@ -292,15 +292,23 @@
         // --- 3. DATA LOADING FUNCTIONS ---
         async function loadHomeData() {
             document.getElementById('quiz-status').innerText = "Checking for daily quiz...";
-            // Use GET method (no body)
+            
+            // V14 FIX: Using a trailing slash to resolve potential 404 issue.
             const quizData = await fetchAPI('/quiz/daily_quiz_info/', 'GET', {}); 
+            
             const quizStatusElement = document.getElementById('quiz-status');
             const startQuizBtn = document.getElementById('start-quiz-btn');
 
-            if (quizData.error || quizData.status === 404) {
-                quizStatusElement.innerText = "No daily quiz is currently active.";
+            if (quizData.error) {
+                 // Check for specific 404 to provide a helpful message
+                if (quizData.error.includes("404: Endpoint /quiz/daily_quiz_info/ Not Found")) {
+                    quizStatusElement.innerHTML = "<strong>Error:</strong> Daily quiz endpoint not found (404). Check your backend URL for '/quiz/daily_quiz_info/'.";
+                } else {
+                    quizStatusElement.innerText = "Error loading daily quiz data.";
+                }
                 startQuizBtn.style.display = 'none';
             } else {
+                // Assuming successful response structure:
                 quizStatusElement.innerHTML = `<strong>${quizData.quiz_name}</strong> (${quizData.questions_count} Qs, ${quizData.points_per_question} pts/Q)`;
                 startQuizBtn.style.display = 'block';
                 startQuizBtn.onclick = () => webApp.showAlert("Quiz starting logic goes here!"); 
@@ -345,11 +353,11 @@
         // Function to display profile data
         function loadProfileData() {
              const profileDetailsElement = document.getElementById('profile-details');
-             const currentUserId = getUserId();
+             
+             // NOTE: Telegram ID is intentionally hidden from the UI as per user request.
              
              profileDetailsElement.innerHTML = `
                 <div class="card">
-                    <p><strong>Telegram ID:</strong> ${currentUserId || 'N/A'}</p>
                     <p><strong>Username:</strong> ${webApp?.initDataUnsafe?.user?.username || 'N/A'}</p>
                     <p><strong>First Name:</strong> ${webApp?.initDataUnsafe?.user?.first_name || 'N/A'}</p>
                     <hr style="border: 0; border-top: 1px solid var(--tg-theme-hint-color);">
@@ -369,7 +377,8 @@
             
             // 2. Update active state
             document.querySelectorAll('.nav-button').forEach(btn => btn.classList.remove('active'));
-            document.querySelector(`.nav-button[data-view="${view}"]`).classList.add('active');
+            const activeBtn = document.querySelector(`.nav-button[data-view="${view}"]`);
+            if (activeBtn) activeBtn.classList.add('active');
             
             // 3. Load data based on view
             const currentUserId = getUserId();
@@ -403,7 +412,7 @@
         document.querySelectorAll('.nav-button').forEach(button => {
             button.addEventListener('click', (e) => {
                 const view = e.target.getAttribute('data-view');
-                switchView(view);
+                if (view) switchView(view);
             });
         });
         
