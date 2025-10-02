@@ -191,7 +191,7 @@
             }
         }
 
-        // --- 2. AUTHENTICATION (CRITICAL JSON LOGGING) ---
+        // --- 2. AUTHENTICATION (Broadened ID Extraction) ---
         async function authenticateUser() {
             const displayElement = document.getElementById('username-display');
             displayElement.innerText = "Authenticating...";
@@ -217,16 +217,18 @@
 
                 const data = await response.json();
                 
-                // *** CRITICAL LOGGING STEP: DUMP THE ENTIRE RESPONSE ***
-                // CHECK YOUR CONSOLE FOR THIS LOG!
-                console.log("[CRITICAL LOG] Successful Login Response Data (Check key for ID!):", data);
-
-                // Attempt to find the ID using common keys
-                let rawId = data?.telegram_id || data?.id || data?.user_id;
+                // *** BROADENED ID EXTRACTION FIX ***
+                // Check for telegram_id, id, user_id, uid, or nested structures (user.id, user.telegram_id)
+                let rawId = data?.telegram_id 
+                         || data?.id 
+                         || data?.user_id
+                         || data?.uid
+                         || data?.user?.id
+                         || data?.user?.telegram_id;
 
                 if (!rawId) {
-                    console.error("[AUTH ERROR] Successful 200 response, but a usable ID key (telegram_id, id, or user_id) is missing in JSON payload. Please copy the above [CRITICAL LOG] output.");
-                    displayElement.innerText = "Authentication Failed: ID missing from server response. Check console log for JSON details.";
+                    console.error("[AUTH ERROR] Successful 200 response, but a usable ID key is missing in the JSON payload.");
+                    displayElement.innerText = "Authentication Failed: User ID key missing or unknown format from server response.";
                     return null;
                 }
                 
