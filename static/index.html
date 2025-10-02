@@ -66,6 +66,16 @@
              margin-top: 10px;
              width: 100%; /* Default to full width for better mobile experience */
         }
+        /* Style for critical error message */
+        .critical-error {
+            color: var(--tg-theme-destructive-text-color, #ff0000);
+            background-color: var(--tg-theme-secondary-bg-color, #fdd);
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 15px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
     </style>
 </head>
 <body>
@@ -195,6 +205,7 @@
         async function authenticateUser() {
             const displayElement = document.getElementById('username-display');
             displayElement.innerText = "Authenticating...";
+            displayElement.classList.remove('critical-error'); // Clear previous error styling
 
             if (!webApp || !webApp.initData) {
                 displayElement.innerText = "Run this inside Telegram!";
@@ -217,18 +228,27 @@
 
                 const data = await response.json();
                 
-                // *** BROADENED ID EXTRACTION FIX ***
-                // Check for telegram_id, id, user_id, uid, or nested structures (user.id, user.telegram_id)
+                // *** V12: BROAD ID EXTRACTION ATTEMPT ***
+                // Check all common direct keys and nested keys
                 let rawId = data?.telegram_id 
                          || data?.id 
                          || data?.user_id
                          || data?.uid
                          || data?.user?.id
-                         || data?.user?.telegram_id;
+                         || data?.user?.telegram_id
+                         || data?.data?.id // Checking for common wrappers like 'data' or 'result'
+                         || data?.data?.telegram_id 
+                         || data?.result?.id
+                         || data?.result?.telegram_id;
 
                 if (!rawId) {
-                    console.error("[AUTH ERROR] Successful 200 response, but a usable ID key is missing in the JSON payload.");
-                    displayElement.innerText = "Authentication Failed: User ID key missing or unknown format from server response.";
+                    // *** CRITICAL DIAGNOSTIC if the ID is not found ***
+                    const keys = Object.keys(data).join(', ');
+                    const criticalMessage = `Authentication Failed: ID missing. Top level keys in server response: [${keys}].`;
+                    console.error(`[CRITICAL DIAGNOSTIC] ${criticalMessage}`, data);
+                    
+                    displayElement.innerHTML = `<span class="critical-error">${criticalMessage}<br>Please copy this message to the developer.</span>`;
+                    webApp.showAlert("Failed to authenticate. ID not found in server response.");
                     return null;
                 }
                 
@@ -238,7 +258,7 @@
                 document.getElementById('auth-telegram-id').value = telegramId;
                 
                 // DISPLAY USER_ID FOR DEBUGGING
-                displayElement.innerHTML = `Welcome, ${data.username || 'Player'}! (ID: <strong>${telegramId}</strong>)`;
+                displayElement.innerHTML = `Welcome, ${webApp?.initDataUnsafe?.user?.first_name || 'Player'}! (ID: <strong>${telegramId}</strong>)`;
                 
                 console.log(`[AUTH SUCCESS] ID ${telegramId} stored in DOM state and displayed.`);
                 
@@ -246,7 +266,7 @@
                 
             } catch (error) {
                 console.error("Authentication Error:", error);
-                displayElement.innerText = "Authentication Failed. See console.";
+                displayElement.innerHTML = `<span class="critical-error">Authentication Failed: ${error.message}</span>`;
                 webApp.showAlert("Could not log you in. Please restart the bot.");
                 return null;
             }
