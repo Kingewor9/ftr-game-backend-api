@@ -55,6 +55,17 @@
             margin-bottom: 15px;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
+        .tg-button {
+             background-color: var(--tg-theme-button-color, #007bff);
+             color: var(--tg-theme-button-text-color, #ffffff);
+             border: none;
+             padding: 10px 15px;
+             border-radius: 5px;
+             font-weight: bold;
+             cursor: pointer;
+             margin-top: 10px;
+             width: 100%; /* Default to full width for better mobile experience */
+        }
     </style>
 </head>
 <body>
@@ -63,18 +74,20 @@
     <div class="content">
         <div id="home-view">
             <h2>Welcome!</h2>
-            <p id="username-display">User Loading...</p>
+            <!-- Displays authenticated user info and ID for debugging -->
+            <p id="username-display">User Loading...</p> 
             <div class="card">
                 <h3>Today's Quiz</h3>
                 <p id="quiz-status">Checking for daily quiz...</p>
-                <button id="start-quiz-btn" style="display: none;">Start Quiz</button>
+                <button id="start-quiz-btn" class="tg-button" style="display: none;">Start Quiz</button>
             </div>
         </div>
 
         <div id="league-view" style="display: none;">
             <h2>My Leagues</h2>
-            <div id="leagues-list">Loading leagues...</div>
-            <button id="create-league-btn">Create New League</button>
+            <!-- Initial state: show authentication is needed -->
+            <div id="leagues-list">Waiting for user authentication...</div>
+            <button id="create-league-btn" class="tg-button">Create New League</button>
         </div>
 
         <div id="profile-view" style="display: none;">
@@ -90,56 +103,51 @@
     </div>
 
     <script>
-        // CRITICAL STEP 1: Replace this placeholder with your stable Render URL.
-        // Example: const API_URL = 'https://your-ftr-api.onrender.com';
-        const API_URL = ''; 
+        const API_URL = ''; // Platform will proxy this
         
-        //for pushing sake
         const webApp = window.Telegram.WebApp;
-        let USER_ID = null;
+        let USER_ID = null; // Global variable for the ID
 
         // 1. Initialize the WebApp
         if (webApp) {
             webApp.ready();
             webApp.expand(); // Use full screen
-            // Set Telegram's theme colors for a native look
             if (webApp.themeParams) {
                 document.body.style.backgroundColor = webApp.themeParams.bg_color;
                 document.body.style.color = webApp.themeParams.text_color;
             }
+        } else {
+             document.getElementById('username-display').innerText = "ERROR: Telegram WebApp not detected.";
         }
 
-       
- // --- Utility Functions (Final Fix for 422) ---
+        // --- Utility Functions (Fix for 422 with Diagnostics) ---
         async function fetchAPI(endpoint, method = 'POST', data = {}) {
             const url = `${API_URL}${endpoint}`;
             const methodUpper = method.toUpperCase();
             
-            let finalData = { ...data }; // Start with any custom data passed in
+            let finalData = { ...data }; 
             let fetchOptions = { method: methodUpper };
 
-            // CRITICAL FIX: Ensure USER_ID is added to finalData before stringifying
-            // Your API expects 'telegram_id' in the JSON body as an integer.
+            // CRITICAL: Ensure USER_ID is added to finalData before stringifying
             if (USER_ID && endpoint !== '/auth/login') {
                 // Add or overwrite the telegram_id key with the user's ID as an integer
                 finalData.telegram_id = Number(USER_ID); 
             }
 
-            // 2. Determine if the method allows a request body
-            const isBodyAllowed = !['GET', 'HEAD'].includes(method.toUpperCase());
+            // Determine if the method allows a request body
+            const isBodyAllowed = !['GET', 'HEAD'].includes(methodUpper);
             
             if (isBodyAllowed) {
-                 // *** DIAGNOSTIC LOGGING ADDED HERE ***
+                // *** DIAGNOSTIC LOGGING ***
                 console.log(`[DEBUG] Sending POST body to ${endpoint}:`, finalData); 
                 
-                // Only set headers and body if the method requires them
                 fetchOptions.headers = { 
                     'Content-Type': 'application/json' 
                 };
+                // Use finalData directly, which now includes telegram_id if USER_ID is set
                 fetchOptions.body = JSON.stringify(finalData);
             }
-            // For GET/HEAD requests, the body property will be omitted entirely, fixing the client error.
-
+            
             try {
                 const response = await fetch(url, fetchOptions);
 
@@ -150,11 +158,11 @@
                 if (!response.ok) {
                     const errorBody = await response.json().catch(() => response.text());
                     
-                    // Improved error messaging for the 422 error (your current problem)
+                    // Improved error messaging for the 422 error
                     let errorMessage = `API Error ${response.status} on ${endpoint}: `;
                     if (response.status === 422) {
                         const detail = typeof errorBody === 'object' ? JSON.stringify(errorBody.detail) : errorBody;
-                        errorMessage = `API Validation Failed (422) on ${endpoint}. Check your FastAPI Pydantic model. Server details: ${detail}`;
+                        errorMessage = `API Validation Failed (422) on ${endpoint}. Server details: ${detail}`;
                     } else {
                         errorMessage += JSON.stringify(errorBody);
                     }
@@ -167,20 +175,27 @@
 
             } catch (error) {
                 console.error("Fetch API Error:", error);
-                webApp.showAlert(`Network Request Failed: ${error.message}`);
+                // Specifically check for API_URL issue (no proxy/backend is down)
+                if (error.message.includes("Failed to fetch") || error.message.includes("Network Request Failed")) {
+                     webApp.showAlert("Backend Unreachable. Check Render deployment and proxy.");
+                } else {
+                     webApp.showAlert(`Network Request Failed: ${error.message}`);
+                }
+                
                 return { error: error.message };
             }
         }
-        
-        // --- 2. AUTHENTICATION (The first request) ---
+
+        // --- 2. AUTHENTICATION ---
         async function authenticateUser() {
+            document.getElementById('username-display').innerText = "Authenticating...";
+
             if (!webApp || !webApp.initData) {
                 document.getElementById('username-display').innerText = "Run this inside Telegram!";
-                return;
+                return null;
             }
 
             try {
-                // Send the raw initData as the body to the /auth/login endpoint
                 const loginUrl = `${API_URL}/auth/login`;
                 const response = await fetch(loginUrl, {
                     method: 'POST',
@@ -196,28 +211,28 @@
 
                 const data = await response.json();
                 
-                // Set the global USER_ID from the response
-                USER_ID = data.telegram_id;
-
-                 // *** DISPLAY USER_ID FOR DEBUGGING ***
+                const telegramId = String(data.telegram_id);
+                
+                // Set the global USER_ID here
+                USER_ID = telegramId;
+                
+                // *** DISPLAY USER_ID FOR DEBUGGING ***
                 document.getElementById('username-display').innerHTML = `Welcome, ${data.username || 'Player'}! (ID: <strong>${USER_ID}</strong>)`;
                 
-                document.getElementById('username-display').innerText = `Welcome, ${data.username || 'Player'}!`;
-                // Now that the user is logged in, load the main data
-                loadHomeData(); 
-                loadLeagues();
-
+                return telegramId;
+                
             } catch (error) {
                 console.error("Authentication Error:", error);
                 document.getElementById('username-display').innerText = "Authentication Failed. See console.";
                 webApp.showAlert("Could not log you in. Please restart the bot.");
+                return null;
             }
         }
 
         // --- 3. DATA LOADING FUNCTIONS ---
         async function loadHomeData() {
-            // Check for the daily quiz
-            // Changed fetchAPI method to GET for this info endpoint
+            document.getElementById('quiz-status').innerText = "Checking for daily quiz...";
+            // Use GET method (no body)
             const quizData = await fetchAPI('/quiz/daily_quiz_info', 'GET', {}); 
             const quizStatusElement = document.getElementById('quiz-status');
             const startQuizBtn = document.getElementById('start-quiz-btn');
@@ -228,26 +243,22 @@
             } else {
                 quizStatusElement.innerHTML = `<strong>${quizData.quiz_name}</strong> (${quizData.questions_count} Qs, ${quizData.points_per_question} pts/Q)`;
                 startQuizBtn.style.display = 'block';
-                // Attach the quiz starting function to the button
                 startQuizBtn.onclick = () => webApp.showAlert("Quiz starting logic goes here!"); 
             }
         }
 
-         // Removed the wait loop since we now call this function after authentication is complete
         async function loadLeagues() {
             const leagueListElement = document.getElementById('leagues-list');
-            leagueListElement.innerText = "Fetching your leagues...";
-
+            
             // Re-check USER_ID just before sending the request
             if (!USER_ID) {
                 console.error("FATAL: USER_ID is null inside loadLeagues(). This should not happen if called correctly.");
                 leagueListElement.innerText = "Error: Authentication token missing. Please refresh the app.";
                 return;
             }
-
-            leagueListElement.innerText = "Fetching your leagues...";
             
-            // Changed method to POST as most endpoints require the user ID payload
+            leagueListElement.innerText = "Fetching your leagues...";
+
             const data = await fetchAPI('/league/my_leagues', 'POST', {}); 
             
             if (data.error) {
@@ -261,7 +272,7 @@
                     html += `<li class="card">
                         <strong>${league.league_name}</strong>
                         <p>Rank: #${league.user_rank} | Points: ${league.user_points}</p>
-                        <button onclick="webApp.showAlert('View Table for ${league.league_name} logic goes here')">View Table</button>
+                        <button class="tg-button" style="width: auto; margin-top: 5px;" onclick="webApp.showAlert('View Table for ${league.league_name} logic goes here')">View Table</button>
                     </li>`;
                 });
                 html += '</ul>';
@@ -270,20 +281,33 @@
                 leagueListElement.innerText = "You are not a member of any leagues yet. Create or Join one!";
             }
         }
-
+        
+        // Function to display profile data
+        function loadProfileData() {
+             const profileDetailsElement = document.getElementById('profile-details');
+             profileDetailsElement.innerHTML = `
+                <div class="card">
+                    <p><strong>Telegram ID:</strong> ${USER_ID || 'N/A'}</p>
+                    <p><strong>Username:</strong> ${webApp?.initDataUnsafe?.user?.username || 'N/A'}</p>
+                    <p><strong>First Name:</strong> ${webApp?.initDataUnsafe?.user?.first_name || 'N/A'}</p>
+                    <p><strong>Total Quizzes Played:</strong> 0 (Mock)</p>
+                    <p><strong>Overall Score:</strong> 0 (Mock)</p>
+                </div>
+             `;
+        }
+        
         // --- 4. NEW SEQUENTIAL APPLICATION INIT FLOW ---
         async function initApp() {
             const userId = await authenticateUser();
 
             if (userId) {
-                // Only load home data initially. Leagues are loaded on tab click.
                 loadHomeData(); 
             } else {
-                // If authentication failed, ensure all sections show an error state
+                // If authentication fails, we explicitly fail the leagues section too.
                 document.getElementById('leagues-list').innerText = "Authentication failed. Cannot load leagues.";
             }
         }
-
+        
         // --- 5. VIEW SWITCHING LOGIC ---
         document.querySelectorAll('.nav-button').forEach(button => {
             button.addEventListener('click', (e) => {
@@ -320,7 +344,7 @@
         });
         
         // Initial call to start the process
-        authenticateUser();
+        initApp();
         
     </script>
 </body>
