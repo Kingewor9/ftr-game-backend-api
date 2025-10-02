@@ -293,7 +293,7 @@
         async function loadHomeData() {
             document.getElementById('quiz-status').innerText = "Checking for daily quiz...";
             // Use GET method (no body)
-            const quizData = await fetchAPI('/quiz/daily_quiz_info', 'GET', {}); 
+            const quizData = await fetchAPI('/quiz/daily_quiz_info/', 'GET', {}); 
             const quizStatusElement = document.getElementById('quiz-status');
             const startQuizBtn = document.getElementById('start-quiz-btn');
 
