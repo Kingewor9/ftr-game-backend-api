@@ -171,40 +171,45 @@
 
 
         async function fetchAPI(endpoint, method = 'POST', data = {}) {
-            const url = `${API_URL}${endpoint}`;
             const methodUpper = method.toUpperCase();
+            const currentUserId = getUserId(); 
             
-            let finalData = { ...data }; 
+            let fetchUrl = `${API_URL}${endpoint}`;
             let fetchOptions = { method: methodUpper };
             
-            const currentUserId = getUserId(); 
-
-            // IMPORTANT: Ensure telegram_id is added as a STRING
-            if (currentUserId && endpoint !== '/auth/login') {
-                finalData.telegram_id = currentUserId; 
-            }
-
-            const isBodyAllowed = !['GET', 'HEAD'].includes(methodUpper);
-            
-            if (isBodyAllowed) {
-                // For POST/PUT, body is used.
-                fetchOptions.headers = { 
-                    'Content-Type': 'application/json' 
-                };
+            // For POST/PUT/DELETE, send ID in JSON body
+            if (['POST', 'PUT', 'DELETE'].includes(methodUpper)) {
+                let finalData = { ...data }; 
+                if (currentUserId && endpoint !== '/auth/login') {
+                    finalData.telegram_id = currentUserId; 
+                }
+                
+                fetchOptions.headers = { 'Content-Type': 'application/json' };
                 fetchOptions.body = JSON.stringify(finalData);
+            
+            } else if (methodUpper === 'GET') {
+                // For GET, we add the ID as a query parameter if needed.
+                const params = new URLSearchParams();
+                if (currentUserId && data.include_user_id) { 
+                     params.append('telegram_id', currentUserId);
+                }
+                
+                const queryString = params.toString();
+                if (queryString) {
+                    fetchUrl += `?${queryString}`;
+                }
             }
             
             try {
-                const response = await fetch(url, fetchOptions);
+                const response = await fetch(fetchUrl, fetchOptions);
 
                 if (!response.ok) {
                     const errorBody = await response.json().catch(() => response.text());
                     
-                    let errorMessage = `API Error ${response.status} on ${endpoint}.`;
+                    let errorMessage = `API Error ${response.status} on ${fetchUrl}.`;
                     if (response.status === 422) {
-                        // Detailed error for validation failure
                         const detail = typeof errorBody === 'object' ? JSON.stringify(errorBody.detail) : errorBody;
-                        errorMessage = `API Validation Failed (422) on ${endpoint}. Server details: ${detail}`;
+                        errorMessage = `API Validation Failed (422) on ${fetchUrl}. Server details: ${detail}`;
                     } else if (response.status === 404) {
                         errorMessage = `API Error 404: Endpoint ${endpoint} Not Found.`;
                     } else {
@@ -293,24 +298,25 @@
         async function loadHomeData() {
             document.getElementById('quiz-status').innerText = "Checking for daily quiz...";
             
-            // V15 FIX: Revert to no trailing slash for the quiz endpoint based on 404 feedback.
-            const quizEndpoint = '/quiz/daily_quiz_info'; 
-            const quizData = await fetchAPI(quizEndpoint, 'GET', {}); 
+            // V17 FIX: Using the confirmed backend endpoint: /quiz/daily_info (POST)
+            const quizEndpoint = '/quiz/daily_info'; 
+            // fetchAPI handles POST and automatically includes telegram_id in the body
+            const quizData = await fetchAPI(quizEndpoint, 'POST', {}); 
             
             const quizStatusElement = document.getElementById('quiz-status');
             const startQuizBtn = document.getElementById('start-quiz-btn');
 
             if (quizData.error) {
-                 // Update the error message to be more explicit about the exact path used
-                if (quizData.error.includes("404: Endpoint /quiz/daily_quiz_info Not Found")) {
-                    quizStatusElement.innerHTML = `<strong>Error:</strong> Daily quiz endpoint not found (404). Please verify your backend path for <code>${quizEndpoint}</code>.`;
+                 // Check for specific 404 to provide a helpful message
+                if (quizData.error.includes("404: Endpoint /quiz/daily_info Not Found")) {
+                    quizStatusElement.innerHTML = `<strong>Error 404:</strong> Daily quiz endpoint not found. Please verify your backend path for <code>${quizEndpoint}</code>.`;
                 } else {
-                    quizStatusElement.innerText = "Error loading daily quiz data.";
+                    quizStatusElement.innerText = "Error loading daily quiz data. See console for details.";
                 }
                 startQuizBtn.style.display = 'none';
             } else {
                 // Assuming successful response structure:
-                quizStatusElement.innerHTML = `<strong>${quizData.quiz_name}</strong> (${quizData.questions_count} Qs, ${quizData.points_per_question} pts/Q)`;
+                quizStatusElement.innerHTML = `<strong>${quizData.quiz_name || 'Daily Quiz'}</strong> (${quizData.questions_count} Qs, ${quizData.points_per_question} pts/Q)`;
                 startQuizBtn.style.display = 'block';
                 startQuizBtn.onclick = () => webApp.showAlert("Quiz starting logic goes here!"); 
             }
@@ -327,7 +333,7 @@
             
             leagueListElement.innerHTML = '<p>Fetching your leagues...</p>';
 
-            // fetchAPI will automatically include the string ID in the payload
+            // fetchAPI will automatically include the string ID in the POST payload
             const data = await fetchAPI('/league/my_leagues', 'POST', {}); 
             
             if (data.error) {
