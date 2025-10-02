@@ -129,6 +129,9 @@
             const isBodyAllowed = !['GET', 'HEAD'].includes(method.toUpperCase());
             
             if (isBodyAllowed) {
+                 // *** DIAGNOSTIC LOGGING ADDED HERE ***
+                console.log(`[DEBUG] Sending POST body to ${endpoint}:`, finalData); 
+                
                 // Only set headers and body if the method requires them
                 fetchOptions.headers = { 
                     'Content-Type': 'application/json' 
@@ -195,6 +198,9 @@
                 
                 // Set the global USER_ID from the response
                 USER_ID = data.telegram_id;
+
+                 // *** DISPLAY USER_ID FOR DEBUGGING ***
+                document.getElementById('username-display').innerHTML = `Welcome, ${data.username || 'Player'}! (ID: <strong>${USER_ID}</strong>)`;
                 
                 document.getElementById('username-display').innerText = `Welcome, ${data.username || 'Player'}!`;
                 // Now that the user is logged in, load the main data
