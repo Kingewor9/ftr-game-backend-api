@@ -87,8 +87,8 @@
     <div class="content">
         <div id="home-view">
             <h2>Welcome!</h2>
-            <!-- Displays authenticated user info and ID for debugging -->
-            <p id="username-display">User Loading...</p> 
+            <!-- Display only the user's name, not the ID -->
+            <p id="username-display">Loading...</p> 
             <div class="card">
                 <h3>Today's Quiz</h3>
                 <p id="quiz-status">Checking for daily quiz...</p>
@@ -109,7 +109,7 @@
     </div>
 
     <div class="nav">
-        <button class="nav-button active" data-view="home">🏠 Home</button>
+        <button class="nav-button" data-view="home">🏠 Home</button>
         <button class="nav-button" data-view="league">🏆 Leagues</button>
         <button class="nav-button" data-view="profile">👤 Profile</button>
     </div>
@@ -140,6 +140,36 @@
         }
 
         // --- Utility Functions ---
+        /** * Recursively searches the response object for any key named 'id', 'user_id', or 'telegram_id'
+         * and returns its value if it looks like a numeric ID.
+         */
+        function findIdRecursively(obj, targetKeys = ['id', 'user_id', 'uid', 'telegram_id']) {
+            if (typeof obj !== 'object' || obj === null) return null;
+
+            for (const key in obj) {
+                if (!obj.hasOwnProperty(key)) continue;
+
+                const value = obj[key];
+                
+                // 1. Check if the current key is a target key and the value is a valid ID format
+                if (targetKeys.includes(key.toLowerCase())) {
+                    // Check if the value is a number or a string containing only digits
+                    if (value && (typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value)))) {
+                         console.log(`[DEBUG] Found ID under key: ${key}`);
+                         return String(value); // Return as string
+                    }
+                }
+                
+                // 2. Recurse into nested objects or arrays
+                if (typeof value === 'object' && value !== null) {
+                    const result = findIdRecursively(value, targetKeys);
+                    if (result) return result;
+                }
+            }
+            return null;
+        }
+
+
         async function fetchAPI(endpoint, method = 'POST', data = {}) {
             const url = `${API_URL}${endpoint}`;
             const methodUpper = method.toUpperCase();
@@ -157,8 +187,7 @@
             const isBodyAllowed = !['GET', 'HEAD'].includes(methodUpper);
             
             if (isBodyAllowed) {
-                console.log(`[DEBUG] Sending POST body to ${endpoint}:`, finalData, `(Type of telegram_id: ${typeof finalData.telegram_id})`); 
-                
+                // For GET requests, query parameters are used. For POST/PUT, body is used.
                 fetchOptions.headers = { 
                     'Content-Type': 'application/json' 
                 };
@@ -168,21 +197,21 @@
             try {
                 const response = await fetch(url, fetchOptions);
 
-                if (response.status === 404) {
-                    return { error: 'Endpoint Not Found', status: 404 };
-                }
-
                 if (!response.ok) {
                     const errorBody = await response.json().catch(() => response.text());
                     
-                    let errorMessage = `API Error ${response.status} on ${endpoint}: `;
+                    let errorMessage = `API Error ${response.status} on ${endpoint}.`;
                     if (response.status === 422) {
+                        // Detailed error for validation failure
                         const detail = typeof errorBody === 'object' ? JSON.stringify(errorBody.detail) : errorBody;
                         errorMessage = `API Validation Failed (422) on ${endpoint}. Server details: ${detail}`;
+                    } else if (response.status === 404) {
+                        errorMessage = `API Error 404: Endpoint ${endpoint} Not Found.`;
                     } else {
-                        errorMessage += JSON.stringify(errorBody);
+                        errorMessage += " Server response: " + (typeof errorBody === 'object' ? JSON.stringify(errorBody) : errorBody);
                     }
                     
+                    console.error("Fetch API Error:", errorMessage);
                     webApp.showAlert(errorMessage);
                     throw new Error(errorMessage);
                 }
@@ -190,25 +219,25 @@
                 return response.json();
 
             } catch (error) {
-                console.error("Fetch API Error:", error);
-                if (error.message.includes("Failed to fetch") || error.message.includes("Network Request Failed")) {
-                     webApp.showAlert("Backend Unreachable. Check Render deployment and proxy.");
+                console.error("Network or Processing Error:", error);
+                if (error.message.includes("Failed to fetch")) {
+                     webApp.showAlert("Backend Unreachable. Check deployment status.");
                 } else {
-                     webApp.showAlert(`Network Request Failed: ${error.message}`);
+                     webApp.showAlert(`Request Failed: ${error.message}`);
                 }
                 
                 return { error: error.message };
             }
         }
 
-        // --- 2. AUTHENTICATION (Broadened ID Extraction) ---
+        // --- 2. AUTHENTICATION (Deep ID Extraction) ---
         async function authenticateUser() {
             const displayElement = document.getElementById('username-display');
             displayElement.innerText = "Authenticating...";
-            displayElement.classList.remove('critical-error'); // Clear previous error styling
+            displayElement.classList.remove('critical-error');
 
             if (!webApp || !webApp.initData) {
-                displayElement.innerText = "Run this inside Telegram!";
+                displayElement.innerText = "Error: Please run this inside Telegram.";
                 return null;
             }
 
@@ -223,51 +252,39 @@
                 });
 
                 if (!response.ok) {
-                    throw new Error(`Login failed with status ${response.status}`);
+                    const errorText = await response.text();
+                    throw new Error(`Login failed with status ${response.status}. Response: ${errorText}`);
                 }
 
                 const data = await response.json();
                 
-                // *** V12: BROAD ID EXTRACTION ATTEMPT ***
-                // Check all common direct keys and nested keys
-                let rawId = data?.telegram_id 
-                         || data?.id 
-                         || data?.user_id
-                         || data?.uid
-                         || data?.user?.id
-                         || data?.user?.telegram_id
-                         || data?.data?.id // Checking for common wrappers like 'data' or 'result'
-                         || data?.data?.telegram_id 
-                         || data?.result?.id
-                         || data?.result?.telegram_id;
+                // *** V13: ROBUST DEEP ID EXTRACTION ***
+                const telegramId = findIdRecursively(data);
 
-                if (!rawId) {
-                    // *** CRITICAL DIAGNOSTIC if the ID is not found ***
-                    const keys = Object.keys(data).join(', ');
-                    const criticalMessage = `Authentication Failed: ID missing. Top level keys in server response: [${keys}].`;
-                    console.error(`[CRITICAL DIAGNOSTIC] ${criticalMessage}`, data);
+                if (!telegramId) {
+                    // CRITICAL DIAGNOSTIC: show the entire structure of the response
+                    const criticalMessage = `Authentication Failed: ID missing. Server Response Structure: ${JSON.stringify(data, null, 2)}`;
+                    console.error(`[CRITICAL DIAGNOSTIC] ${criticalMessage}`);
                     
-                    displayElement.innerHTML = `<span class="critical-error">${criticalMessage}<br>Please copy this message to the developer.</span>`;
+                    displayElement.innerHTML = `<span class="critical-error">Authentication Failed: ID not found in server response.<br>Please copy the full error from the console.</span>`;
                     webApp.showAlert("Failed to authenticate. ID not found in server response.");
                     return null;
                 }
                 
-                const telegramId = String(rawId); // Ensure it's always a string for subsequent requests
-                
                 // Store ID persistently in the hidden DOM field
                 document.getElementById('auth-telegram-id').value = telegramId;
                 
-                // DISPLAY USER_ID FOR DEBUGGING
-                displayElement.innerHTML = `Welcome, ${webApp?.initDataUnsafe?.user?.first_name || 'Player'}! (ID: <strong>${telegramId}</strong>)`;
+                // SUCCESS: Display only the welcome message (no ID)
+                displayElement.innerHTML = `Welcome back, <strong>${webApp?.initDataUnsafe?.user?.first_name || 'Player'}</strong>!`;
                 
-                console.log(`[AUTH SUCCESS] ID ${telegramId} stored in DOM state and displayed.`);
+                console.log(`[AUTH SUCCESS] User ID ${telegramId} successfully extracted and stored.`);
                 
                 return telegramId;
                 
             } catch (error) {
                 console.error("Authentication Error:", error);
                 displayElement.innerHTML = `<span class="critical-error">Authentication Failed: ${error.message}</span>`;
-                webApp.showAlert("Could not log you in. Please restart the bot.");
+                webApp.showAlert("Could not log you in. Please refresh the app.");
                 return null;
             }
         }
@@ -299,29 +316,29 @@
                 return;
             }
             
-            leagueListElement.innerText = "Fetching your leagues...";
+            leagueListElement.innerHTML = '<p>Fetching your leagues...</p>';
 
-            // fetchAPI will automatically include the string ID
+            // fetchAPI will automatically include the string ID in the payload
             const data = await fetchAPI('/league/my_leagues', 'POST', {}); 
             
             if (data.error) {
-                leagueListElement.innerText = "Failed to load leagues.";
+                leagueListElement.innerText = "Failed to load leagues. See console for API error.";
                 return;
             }
 
             if (data.my_leagues && data.my_leagues.length > 0) {
-                let html = '<ul>';
+                let html = '<ul style="list-style: none; padding: 0;">';
                 data.my_leagues.forEach(league => {
                     html += `<li class="card">
-                        <strong>${league.league_name}</strong>
-                        <p>Rank: #${league.user_rank} | Points: ${league.user_points}</p>
-                        <button class="tg-button" style="width: auto; margin-top: 5px;" onclick="webApp.showAlert('View Table for ${league.league_name} logic goes here')">View Table</button>
+                        <h4 style="margin-top: 0; color: var(--tg-theme-text-color);">${league.league_name}</h4>
+                        <p style="margin: 5px 0;">Rank: <strong>#${league.user_rank || 'N/A'}</strong> | Points: <strong>${league.user_points || 0}</strong></p>
+                        <button class="tg-button" style="width: auto; margin-top: 5px; padding: 8px 12px; font-size: 0.9em;" onclick="webApp.showAlert('View Table for ${league.league_name} logic goes here')">View Leaderboard</button>
                     </li>`;
                 });
                 html += '</ul>';
                 leagueListElement.innerHTML = html;
             } else {
-                leagueListElement.innerText = "You are not a member of any leagues yet. Create or Join one!";
+                leagueListElement.innerHTML = "<p>You are not a member of any leagues yet. Create or Join one!</p>";
             }
         }
         
@@ -335,53 +352,58 @@
                     <p><strong>Telegram ID:</strong> ${currentUserId || 'N/A'}</p>
                     <p><strong>Username:</strong> ${webApp?.initDataUnsafe?.user?.username || 'N/A'}</p>
                     <p><strong>First Name:</strong> ${webApp?.initDataUnsafe?.user?.first_name || 'N/A'}</p>
+                    <hr style="border: 0; border-top: 1px solid var(--tg-theme-hint-color);">
                     <p><strong>Total Quizzes Played:</strong> 0 (Mock)</p>
                     <p><strong>Overall Score:</strong> 0 (Mock)</p>
                 </div>
              `;
         }
         
-        // --- 4. APPLICATION INIT FLOW ---
+        // --- 4. VIEW SWITCHING & INIT ---
+        /** Manually switches the view and updates the navigation buttons. */
+        function switchView(view) {
+             // 1. Switch visibility
+            document.getElementById('home-view').style.display = view === 'home' ? 'block' : 'none';
+            document.getElementById('league-view').style.display = view === 'league' ? 'block' : 'none';
+            document.getElementById('profile-view').style.display = view === 'profile' ? 'block' : 'none';
+            
+            // 2. Update active state
+            document.querySelectorAll('.nav-button').forEach(btn => btn.classList.remove('active'));
+            document.querySelector(`.nav-button[data-view="${view}"]`).classList.add('active');
+            
+            // 3. Load data based on view
+            const currentUserId = getUserId();
+            
+            if (currentUserId) {
+                if (view === 'league') {
+                    loadLeagues(); // Load leagues on demand
+                } else if (view === 'home') {
+                    loadHomeData(); // Load home data on demand
+                } else if (view === 'profile') {
+                    loadProfileData();
+                }
+            } else {
+                 document.getElementById('leagues-list').innerText = "Authentication is required to view leagues.";
+            }
+        }
+
         async function initApp() {
             const userId = await authenticateUser();
 
             if (userId) {
-                loadHomeData(); 
+                // Feature Request: Start on the Leagues tab
+                switchView('league'); 
             } else {
-                document.getElementById('leagues-list').innerText = "Authentication failed. Cannot load leagues.";
+                // If auth fails, show home with the error message
+                switchView('home'); 
             }
         }
         
-        // --- 5. VIEW SWITCHING LOGIC ---
+        // --- 5. EVENT LISTENERS ---
         document.querySelectorAll('.nav-button').forEach(button => {
             button.addEventListener('click', (e) => {
                 const view = e.target.getAttribute('data-view');
-                
-                // 1. Switch visibility
-                document.getElementById('home-view').style.display = view === 'home' ? 'block' : 'none';
-                document.getElementById('league-view').style.display = view === 'league' ? 'block' : 'none';
-                document.getElementById('profile-view').style.display = view === 'profile' ? 'block' : 'none';
-                
-                // 2. Update active state
-                document.querySelectorAll('.nav-button').forEach(btn => btn.classList.remove('active'));
-                e.target.classList.add('active');
-                
-                // 3. Load data based on view
-                const currentUserId = getUserId();
-
-                if (view === 'league') {
-                    if (currentUserId) {
-                        loadLeagues(); // Load leagues on demand
-                    } else {
-                        document.getElementById('leagues-list').innerText = "Authentication failed. Please refresh the app.";
-                    }
-                } else if (view === 'profile') {
-                    if (currentUserId) {
-                        loadProfileData();
-                    } else {
-                        document.getElementById('profile-details').innerText = "Authentication failed. Please refresh the app.";
-                    }
-                }
+                switchView(view);
             });
         });
         
