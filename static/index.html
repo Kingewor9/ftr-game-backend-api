@@ -110,21 +110,19 @@
         }
 
        
-        // --- Utility Functions (FIXED to prevent 'Request with GET/HEAD method cannot have body' error) ---
+ // --- Utility Functions (Final Fix for 422) ---
         async function fetchAPI(endpoint, method = 'POST', data = {}) {
             const url = `${API_URL}${endpoint}`;
+            const methodUpper = method.toUpperCase();
             
-            // Define options common to all requests
-            let fetchOptions = {
-                method: method,
-            };
+            let finalData = { ...data }; // Start with any custom data passed in
+            let fetchOptions = { method: methodUpper };
 
-            // 1. Prepare data payload
-            let finalData = { ...data }; // Clone data object
-
-            // Add the user's ID to the data payload for almost every request except login
+            // CRITICAL FIX: Ensure USER_ID is added to finalData before stringifying
+            // Your API expects 'telegram_id' in the JSON body as an integer.
             if (USER_ID && endpoint !== '/auth/login') {
-                finalData.telegram_id = USER_ID;
+                // Add or overwrite the telegram_id key with the user's ID as an integer
+                finalData.telegram_id = Number(USER_ID); 
             }
 
             // 2. Determine if the method allows a request body
