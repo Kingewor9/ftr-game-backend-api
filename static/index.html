@@ -236,6 +236,23 @@
         async function loadLeagues() {
             const leagueListElement = document.getElementById('leagues-list');
             leagueListElement.innerText = "Fetching your leagues...";
+
+                        // CRITICAL FIX: Defensive wait loop to ensure USER_ID is set before fetching
+            let attempts = 0;
+            while (!USER_ID && attempts < 10) {
+                await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
+                attempts++;
+                if (attempts === 5) {
+                    leagueListElement.innerText = "Still waiting for user ID...";
+                }
+            }
+
+            if (!USER_ID) {
+                leagueListElement.innerText = "Error: Could not retrieve user ID after login.";
+                return;
+            }
+
+            leagueListElement.innerText = "Fetching your leagues...";
             
             // Changed method to POST as most endpoints require the user ID payload
             const data = await fetchAPI('/league/my_leagues', 'POST', {}); 
