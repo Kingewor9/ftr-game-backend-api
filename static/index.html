@@ -221,6 +221,20 @@
         </div>
     </div>
 
+    <!-- LEAGUE DETAIL MODAL (LEADERBOARD) - NEW ELEMENT -->
+    <div id="league-detail-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <h3 id="detail-modal-title">League Leaderboard</h3>
+            <div id="leaderboard-content">
+                <p style="text-align: center;">Loading leaderboard...</p>
+            </div>
+            
+            <div class="modal-buttons" style="justify-content: center;">
+                <button type="button" class="tg-button cancel-btn" onclick="closeLeagueDetailModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const API_URL = ''; // Platform will proxy this
         
@@ -464,6 +478,10 @@
             }
         }
 
+                /** * 3. League List Rendering
+         * This function fetches and renders the list of leagues.
+         * Note the change in the button to call the new openLeagueDetailModal function.
+         */
         async function loadLeagues() {
             const leagueListElement = document.getElementById('leagues-list');
             const currentUserId = getUserId();
@@ -486,10 +504,15 @@
             if (data.my_leagues && data.my_leagues.length > 0) {
                 let html = '<ul style="list-style: none; padding: 0;">';
                 data.my_leagues.forEach(league => {
+                    // Assuming league.league_id exists in the data for the next step
+                    const leagueId = league.league_id || generateInviteCode(); // Use a fallback if ID is missing
+                    const leagueName = league.league_name.replace(/'/g, "\\'"); // Sanitize name for JS call
+                    
                     html += `<li class="card">
                         <h4 style="margin-top: 0; color: var(--tg-theme-text-color);">${league.league_name}</h4>
                         <p style="margin: 5px 0;">Rank: <strong>#${league.user_rank || 'N/A'}</strong> | Points: <strong>${league.user_points || 0}</strong></p>
-                        <button class="tg-button" style="width: auto; margin-top: 5px; padding: 8px 12px; font-size: 0.9em;" onclick="showTwaAlert('View Table for ${league.league_name} logic goes here')">View Leaderboard</button>
+                        <!-- Updated button to call the new League Detail Modal function -->
+                        <button class="tg-button" style="width: auto; margin-top: 5px; padding: 8px 12px; font-size: 0.9em;" onclick="openLeagueDetailModal('${leagueId}', '${leagueName}')">View Leaderboard</button>
                     </li>`;
                 });
                 html += '</ul>';
@@ -651,8 +674,80 @@
             }
         }
 
+        // --- 7. LEAGUE DETAIL & LEADERBOARD LOGIC (New Functions) ---
 
-        // --- 7. INITIALIZATION & EVENT LISTENERS ---
+        function closeLeagueDetailModal() {
+            document.getElementById('league-detail-modal').style.display = 'none';
+        }
+
+        /** * 1. New League Detail Modal Function (opens modal and starts loading leaderboard)
+         */
+        async function openLeagueDetailModal(leagueId, leagueName) {
+            document.getElementById('detail-modal-title').innerText = `${leagueName} Leaderboard`;
+            const contentElement = document.getElementById('leaderboard-content');
+            contentElement.innerHTML = '<p style="text-align: center;">Loading leaderboard...</p>';
+            document.getElementById('league-detail-modal').style.display = 'flex';
+
+            await loadLeaderboard(leagueId, contentElement);
+        }
+
+        /** * 2. Show Leaderboard Function (fetches and renders the leaderboard)
+         */
+        async function loadLeaderboard(leagueId, contentElement) {
+            // API endpoint assumed: /league/leaderboard (POST)
+            // You may need to confirm this endpoint name with your backend
+            const data = await fetchAPI('/league/leaderboard', 'POST', {
+                league_id: leagueId,
+                // telegram_id is automatically added by fetchAPI helper
+            });
+
+            if (data.error) {
+                contentElement.innerHTML = `<p class="critical-error">Failed to load leaderboard: ${data.error.substring(0, 100)}</p>`;
+                return;
+            }
+
+            if (data.leaderboard && data.leaderboard.length > 0) {
+                let html = '<table style="width: 100%; border-collapse: collapse;">';
+                
+                // Table Header
+                html += `
+                    <thead style="background-color: var(--tg-theme-secondary-bg-color);">
+                        <tr>
+                            <th style="padding: 10px; text-align: left;">Rank</th>
+                            <th style="padding: 10px; text-align: left;">Player</th>
+                            <th style="padding: 10px; text-align: right;">Points</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                `;
+                
+                // Table Rows
+                data.leaderboard.forEach((player, index) => {
+                    // Highlight the current user
+                    const isCurrentUser = String(player.telegram_id) === getUserId();
+                    const rowBgColor = isCurrentUser ? 'var(--tg-theme-link-color)' : 'transparent';
+                    const textColor = isCurrentUser ? 'var(--tg-theme-button-text-color)' : 'var(--tg-theme-text-color)';
+                    const borderStyle = isCurrentUser ? '2px solid var(--tg-theme-link-color)' : '1px solid var(--tg-theme-hint-color)';
+
+                    html += `
+                        <tr style="color: ${textColor}; background-color: ${isCurrentUser ? 'var(--tg-theme-link-color)' : 'transparent'}">
+                            <td style="padding: 10px; border-bottom: ${borderStyle}; font-weight: ${isCurrentUser ? 'bold' : 'normal'};">${index + 1}</td>
+                            <td style="padding: 10px; border-bottom: ${borderStyle}; font-weight: ${isCurrentUser ? 'bold' : 'normal'};">${player.username || 'Anonymous'}</td>
+                            <td style="padding: 10px; text-align: right; border-bottom: ${borderStyle}; font-weight: ${isCurrentUser ? 'bold' : 'normal'};">${player.total_points || 0}</td>
+                        </tr>
+                    `;
+                });
+                
+                html += '</tbody></table>';
+                contentElement.innerHTML = html;
+                
+            } else {
+                contentElement.innerHTML = "<p style='text-align: center;'>No players found in this league yet.</p>";
+            }
+        }
+
+
+        // --- 8. INITIALIZATION & EVENT LISTENERS ---
         async function initApp() {
             const userId = await authenticateUser();
 
