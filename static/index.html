@@ -224,6 +224,27 @@
             return idInput ? idInput.value : null; 
         }
 
+        // --- Telegram Alert Safety Helper ---
+        /** Truncates and sanitizes a message before displaying it via Telegram's showAlert. */
+        function showTwaAlert(message) {
+            if (window.Telegram && window.Telegram.WebApp) {
+                const webApp = window.Telegram.WebApp;
+                const MAX_LENGTH = 150; // Use a safe maximum length
+                // Truncate message if too long
+                const displayMessage = message.length > MAX_LENGTH 
+                    ? message.substring(0, MAX_LENGTH - 3) + '...'
+                    : message;
+                
+                // Remove potential HTML/special chars that could break the native function
+                const cleanMessage = displayMessage.replace(/<\/?[^>]+(>|$)/g, "").trim(); 
+
+                webApp.showAlert(cleanMessage);
+            } else {
+                console.error("ALERT (TWA Missing):", message);
+            }
+        }
+
+
         // --- Utility Functions ---
         /** Recursively searches the response object for any key named 'id', 'user_id', or 'telegram_id'
          * and returns its value if it looks like a numeric ID.
@@ -294,7 +315,7 @@
                     let errorMessage = `API Error ${response.status} on ${fetchUrl}.`;
                     if (response.status === 422) {
                         const detail = typeof errorBody === 'object' ? JSON.stringify(errorBody.detail) : errorBody;
-                        errorMessage = `API Validation Failed (422) on ${fetchUrl}. Server details: ${detail}`;
+                        errorMessage = `API Validation Failed (422). Server details: ${detail}`;
                     } else if (response.status === 404) {
                         errorMessage = `API Error 404: Endpoint ${endpoint} Not Found.`;
                     } else {
@@ -302,7 +323,8 @@
                     }
                     
                     console.error("Fetch API Error:", errorMessage);
-                    webApp.showAlert(errorMessage);
+                    // Use the safe TWA alert function here
+                    showTwaAlert(errorMessage); 
                     throw new Error(errorMessage);
                 }
 
@@ -311,11 +333,13 @@
             } catch (error) {
                 console.error("Network or Processing Error:", error);
                 if (error.message.includes("Failed to fetch")) {
-                     webApp.showAlert("Backend Unreachable. Check deployment status.");
+                     // Use the safe TWA alert function here
+                     showTwaAlert("Backend Unreachable. Check deployment status.");
                 } else {
                      // Check if this is a custom error message thrown by us
                      if (!error.message.includes("API Error")) {
-                        webApp.showAlert(`Request Failed: ${error.message}`);
+                        // Use the safe TWA alert function here
+                        showTwaAlert(`Request Failed: ${error.message}`);
                      }
                 }
                 
@@ -359,7 +383,8 @@
                     console.error(`[CRITICAL DIAGNOSTIC] ${criticalMessage}`);
                     
                     displayElement.innerHTML = `<span class="critical-error">Authentication Failed: ID not found in server response.<br>Please copy the full error from the console.</span>`;
-                    webApp.showAlert("Failed to authenticate. ID not found in server response.");
+                    // Use the safe TWA alert function here
+                    showTwaAlert("Failed to authenticate. ID not found in server response.");
                     return null;
                 }
                 
@@ -376,7 +401,8 @@
             } catch (error) {
                 console.error("Authentication Error:", error);
                 displayElement.innerHTML = `<span class="critical-error">Authentication Failed: ${error.message}</span>`;
-                webApp.showAlert("Could not log you in. Please refresh the app.");
+                // Use the safe TWA alert function here
+                showTwaAlert("Could not log you in. Please refresh the app.");
                 return null;
             }
         }
@@ -400,7 +426,8 @@
                 // Assuming successful response structure:
                 quizStatusElement.innerHTML = `<strong>${quizData.quiz_name || 'Daily Quiz'}</strong> (${quizData.questions_count || 5} Qs, ${quizData.points_per_question || 10} pts/Q)`;
                 startQuizBtn.style.display = 'block';
-                startQuizBtn.onclick = () => webApp.showAlert("Quiz starting logic goes here!"); 
+                // Use the safe TWA alert function here
+                startQuizBtn.onclick = () => showTwaAlert("Quiz starting logic goes here!"); 
             }
         }
 
@@ -429,7 +456,7 @@
                     html += `<li class="card">
                         <h4 style="margin-top: 0; color: var(--tg-theme-text-color);">${league.league_name}</h4>
                         <p style="margin: 5px 0;">Rank: <strong>#${league.user_rank || 'N/A'}</strong> | Points: <strong>${league.user_points || 0}</strong></p>
-                        <button class="tg-button" style="width: auto; margin-top: 5px; padding: 8px 12px; font-size: 0.9em;" onclick="webApp.showAlert('View Table for ${league.league_name} logic goes here')">View Leaderboard</button>
+                        <button class="tg-button" style="width: auto; margin-top: 5px; padding: 8px 12px; font-size: 0.9em;" onclick="showTwaAlert('View Table for ${league.league_name} logic goes here')">View Leaderboard</button>
                     </li>`;
                 });
                 html += '</ul>';
@@ -516,7 +543,7 @@
                 // telegram_id is automatically added by fetchAPI helper
             };
 
-            // FIX: Using the confirmed correct path: /league/create
+            // Using the confirmed correct path: /league/create
             const data = await fetchAPI('/league/create', 'POST', leagueData);
 
             if (data.error) {
