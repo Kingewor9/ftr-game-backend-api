@@ -94,6 +94,12 @@ class LeagueJoin(BaseModel):
 class LeagueSearch(BaseModel):
     telegram_id: str = Field(..., description="The searching user's Telegram ID.")
     query: str = Field(..., description="Search term for public leagues.")
+    
+    # NEW MODEL: Required for fetching a specific league's details/leaderboard
+class LeagueDetailsRequest(BaseModel):
+    telegram_id: str = Field(..., description="The user requesting the leaderboard.")
+    code: str = Field(..., description="The 6-digit code of the league to view.")
+
 
 # --- Temporary "Database" ---
 user_db = {} 
@@ -729,6 +735,58 @@ async def search_leagues(search_data: LeagueSearch):
         "search_results": search_results
     }
     
+    # =======================================================================
+# >>> NEW ENDPOINT TO FETCH A SPECIFIC LEAGUE'S LEADERBOARD <<<
+# This resolves the 405 error by defining the required path.
+# =======================================================================
+@app.post("/league/leaderboard")
+async def get_league_leaderboard(request_data: LeagueDetailsRequest):
+    """
+    Fetches the full member list for a specific league, sorted by points (the leaderboard).
+    The user must be a member or the league must be public.
+    """
+    user_id = request_data.telegram_id
+    code = request_data.code.upper()
+
+    if code not in league_db:
+        raise HTTPException(status_code=404, detail="League not found.")
+
+    league = league_db[code]
+
+    # Authorization Check: Ensure the user is a member of the league (or the league is public)
+    is_member = any(member["telegram_id"] == user_id for member in league["members"])
+    if league["is_private"] and not is_member:
+        raise HTTPException(status_code=403, detail="Not authorized to view this private league's leaderboard.")
+
+    # 1. Sort members to create the official leaderboard
+    leaderboard = sorted(
+        league["members"], 
+        key=lambda m: m["league_points"], 
+        reverse=True
+    )
+
+    # 2. Enhance the output for the frontend (attach usernames and rank)
+    leaderboard_with_names = []
+    for rank, member in enumerate(leaderboard, 1):
+        member_id = member["telegram_id"]
+        # Retrieve username from the global user_db
+        username = user_db.get(member_id, {}).get("username", f"User {member_id[:4]}...")
+        
+        leaderboard_with_names.append({
+            "rank": rank,
+            "telegram_id": member_id,
+            "username": username,
+            "points": member["league_points"],
+            "is_current_user": member_id == user_id
+        })
+
+    return {
+        "status": "success",
+        "league_name": league["name"],
+        "league_code": code,
+        "leaderboard": leaderboard_with_names
+    }
+# =======================================================================
     # 2. STATIC FILES MOUNT (This is where the magic happens)
 # This serves the index.html file from the 'static' directory when the user visits the root URL (/)
 # It is placed AFTER CORS but BEFORE your API routes.
