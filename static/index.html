@@ -510,27 +510,28 @@
             
             statusElement.innerText = 'Creating league...';
 
-            // Data structure based on typical FastAPI/Pydantic model:
             const leagueData = {
                 league_name: leagueName,
                 is_private: isPrivate,
                 // telegram_id is automatically added by fetchAPI helper
             };
 
-            const data = await fetchAPI('/league/create_league', 'POST', leagueData);
+            // FIX: Using the confirmed correct path: /league/create
+            const data = await fetchAPI('/league/create', 'POST', leagueData);
 
             if (data.error) {
                 statusElement.style.color = 'var(--tg-theme-destructive-text-color)';
-                statusElement.innerText = `Creation Failed: ${data.error.substring(0, 50)}...`;
+                statusElement.innerText = `Creation Failed: ${data.error.substring(0, 500)}`;
             } else {
                 statusElement.style.color = 'var(--tg-theme-link-color)';
                 // Assuming successful response includes the new league ID or name
+                // If your backend returns the entire new league object, adjust key names as needed
                 statusElement.innerHTML = `League <strong>${data.league_name || leagueName}</strong> created successfully! <br> Code: <strong>${data.invite_code || 'TBD'}</strong>`;
                 
                 // Close modal after a delay and refresh league list
                 setTimeout(() => {
                     closeCreateLeagueModal();
-                    loadLeagues();
+                    loadLeagues(); // Refresh the list to show the new league
                 }, 1500); 
             }
         }
