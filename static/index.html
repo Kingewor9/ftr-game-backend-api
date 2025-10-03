@@ -109,7 +109,8 @@
             border-bottom: 1px solid var(--tg-theme-secondary-bg-color);
             padding-bottom: 5px;
         }
-        .modal-content input[type="text"] {
+        .modal-content input[type="text"],
+        .modal-content textarea {
             width: 100%;
             padding: 10px;
             margin-bottom: 15px;
@@ -118,6 +119,7 @@
             color: var(--tg-theme-text-color);
             border-radius: 5px;
             box-sizing: border-box;
+            resize: vertical;
         }
         .modal-buttons {
             display: flex;
@@ -183,7 +185,11 @@
                 <label for="league-name" style="font-size: 0.9em; display: block; margin-bottom: 5px;">League Name</label>
                 <input type="text" id="league-name" placeholder="E.g., Champions Challenge" required maxlength="50">
                 
-                <label for="is-private" style="font-size: 0.9em; display: block; margin-bottom: 5px;">
+                <label for="league-description" style="font-size: 0.9em; display: block; margin-bottom: 5px;">Description (e.g., Rules or goal)</label>
+                <!-- NEW TEXT AREA FOR DESCRIPTION -->
+                <textarea id="league-description" placeholder="A friendly league for the office staff..." required maxlength="200" rows="3"></textarea>
+                
+                <label for="is-private" style="font-size: 0.9em; display: block; margin-bottom: 15px;">
                     <input type="checkbox" id="is-private" checked> Private League (Requires Invite Code)
                 </label>
                 
@@ -528,18 +534,21 @@
             
             const statusElement = document.getElementById('league-creation-status');
             const leagueName = document.getElementById('league-name').value.trim();
+            // NEW: Get description value
+            const leagueDescription = document.getElementById('league-description').value.trim();
             const isPrivate = document.getElementById('is-private').checked;
 
-            if (!leagueName) {
-                statusElement.innerText = "League name is required!";
+            if (!leagueName || !leagueDescription) {
+                statusElement.innerText = "League name and description are required!";
                 return;
             }
             
             statusElement.innerText = 'Creating league...';
 
-            // FIX: Changed 'league_name' to 'name' to match FastAPI Pydantic model
+            // FIX: Including 'description' and confirming 'name'
             const leagueData = {
                 name: leagueName, 
+                description: leagueDescription, // Added description field
                 is_private: isPrivate,
                 // telegram_id is automatically added by fetchAPI helper
             };
