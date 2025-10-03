@@ -160,6 +160,7 @@
             <div id="leagues-list">Waiting for user authentication...</div>
             <!-- The Create League button now opens the modal -->
             <button id="create-league-btn" class="tg-button">Create New League</button>
+            <!-- Join League button opens the new Join modal -->
             <button id="join-league-btn" class="tg-button" style="background-color: var(--tg-theme-hint-color);">Join League via Code</button>
         </div>
 
@@ -186,7 +187,6 @@
                 <input type="text" id="league-name" placeholder="E.g., Champions Challenge" required maxlength="50">
                 
                 <label for="league-description" style="font-size: 0.9em; display: block; margin-bottom: 5px;">Description (e.g., Rules or goal)</label>
-                <!-- NEW TEXT AREA FOR DESCRIPTION -->
                 <textarea id="league-description" placeholder="A friendly league for the office staff..." required maxlength="200" rows="3"></textarea>
                 
                 <label for="is-private" style="font-size: 0.9em; display: block; margin-bottom: 15px;">
@@ -198,6 +198,24 @@
                 <div class="modal-buttons">
                     <button type="button" class="tg-button cancel-btn" onclick="closeCreateLeagueModal()">Cancel</button>
                     <button type="submit" class="tg-button">Create League</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- JOIN LEAGUE MODAL -->
+    <div id="join-league-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <h3>Join League</h3>
+            <form id="join-league-form">
+                <label for="invite-code" style="font-size: 0.9em; display: block; margin-bottom: 5px;">Invite Code</label>
+                <input type="text" id="invite-code" placeholder="Enter 6-digit code..." required maxlength="6" pattern="[A-Z0-9]{6}">
+                
+                <div id="league-join-status" style="margin-top: 10px; font-size: 0.9em; color: var(--tg-theme-link-color);"></div>
+
+                <div class="modal-buttons">
+                    <button type="button" class="tg-button cancel-btn" onclick="closeJoinLeagueModal()">Cancel</button>
+                    <button type="submit" class="tg-button">Join League</button>
                 </div>
             </form>
         </div>
@@ -534,7 +552,6 @@
             
             const statusElement = document.getElementById('league-creation-status');
             const leagueName = document.getElementById('league-name').value.trim();
-            // NEW: Get description value
             const leagueDescription = document.getElementById('league-description').value.trim();
             const isPrivate = document.getElementById('is-private').checked;
 
@@ -545,15 +562,14 @@
             
             statusElement.innerText = 'Creating league...';
 
-            // FIX: Including 'description' and confirming 'name'
+            // Payload structure confirmed by previous errors
             const leagueData = {
                 name: leagueName, 
-                description: leagueDescription, // Added description field
+                description: leagueDescription, 
                 is_private: isPrivate,
                 // telegram_id is automatically added by fetchAPI helper
             };
 
-            // Using the confirmed correct path: /league/create
             const data = await fetchAPI('/league/create', 'POST', leagueData);
 
             if (data.error) {
@@ -571,8 +587,58 @@
                 }, 1500); 
             }
         }
+        
+        // --- 6. LEAGUE JOIN MODAL LOGIC (NEW) ---
+        function openJoinLeagueModal() {
+            document.getElementById('join-league-modal').style.display = 'flex';
+            document.getElementById('league-join-status').innerText = '';
+        }
 
-        // --- 6. INITIALIZATION & EVENT LISTENERS ---
+        function closeJoinLeagueModal() {
+            document.getElementById('join-league-modal').style.display = 'none';
+            document.getElementById('join-league-form').reset();
+        }
+
+        async function handleJoinLeague(event) {
+            event.preventDefault();
+            
+            const statusElement = document.getElementById('league-join-status');
+            const inviteCode = document.getElementById('invite-code').value.trim().toUpperCase();
+
+            if (inviteCode.length !== 6 || !/^[A-Z0-9]{6}$/.test(inviteCode)) {
+                statusElement.style.color = 'var(--tg-theme-destructive-text-color)';
+                statusElement.innerText = "Please enter a valid 6-digit alphanumeric code.";
+                return;
+            }
+            
+            statusElement.innerText = 'Joining league...';
+            statusElement.style.color = 'var(--tg-theme-link-color)';
+            
+            const joinData = {
+                invite_code: inviteCode, 
+                // telegram_id is automatically added by fetchAPI helper
+            };
+
+            // Assuming the endpoint is /league/join_league
+            const data = await fetchAPI('/league/join_league', 'POST', joinData);
+
+            if (data.error) {
+                statusElement.style.color = 'var(--tg-theme-destructive-text-color)';
+                statusElement.innerText = `Join Failed: ${data.error.substring(0, 500)}`;
+            } else {
+                statusElement.style.color = 'var(--tg-theme-link-color)';
+                statusElement.innerHTML = `Successfully joined league! <br><strong>${data.league_name || 'League'}</strong>`;
+                
+                // Close modal after a delay and refresh league list
+                setTimeout(() => {
+                    closeJoinLeagueModal();
+                    loadLeagues(); // Refresh the list to show the newly joined league
+                }, 1500); 
+            }
+        }
+
+
+        // --- 7. INITIALIZATION & EVENT LISTENERS ---
         async function initApp() {
             const userId = await authenticateUser();
 
@@ -593,11 +659,13 @@
             });
         });
 
-        // "Create League" button opens the modal
+        // League Management Listeners
         document.getElementById('create-league-btn').addEventListener('click', openCreateLeagueModal);
-        
-        // Form submission listener for league creation
         document.getElementById('create-league-form').addEventListener('submit', handleCreateLeague);
+        
+        // NEW: Join League Listeners
+        document.getElementById('join-league-btn').addEventListener('click', openJoinLeagueModal);
+        document.getElementById('join-league-form').addEventListener('submit', handleJoinLeague);
 
         // Initial call to start the process
         initApp();
