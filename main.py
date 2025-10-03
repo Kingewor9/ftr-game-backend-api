@@ -95,10 +95,10 @@ class LeagueSearch(BaseModel):
     telegram_id: str = Field(..., description="The searching user's Telegram ID.")
     query: str = Field(..., description="Search term for public leagues.")
     
-    # NEW MODEL: Required for fetching a specific league's details/leaderboard
+    # NEW MODEL: Now uses 'league_id' to match the field name sent by the frontend
 class LeagueDetailsRequest(BaseModel):
     telegram_id: str = Field(..., description="The user requesting the leaderboard.")
-    code: str = Field(..., description="The 6-digit code of the league to view.")
+    league_id: str = Field(..., description="The 6-digit code/ID of the league to view.")
 
 
 # --- Temporary "Database" ---
@@ -737,7 +737,7 @@ async def search_leagues(search_data: LeagueSearch):
     
     # =======================================================================
 # >>> NEW ENDPOINT TO FETCH A SPECIFIC LEAGUE'S LEADERBOARD <<<
-# This resolves the 405 error by defining the required path.
+# UPDATED to use 'league_id' instead of 'code' in the request model
 # =======================================================================
 @app.post("/league/leaderboard")
 async def get_league_leaderboard(request_data: LeagueDetailsRequest):
@@ -746,7 +746,8 @@ async def get_league_leaderboard(request_data: LeagueDetailsRequest):
     The user must be a member or the league must be public.
     """
     user_id = request_data.telegram_id
-    code = request_data.code.upper()
+    # IMPORTANT FIX: Extract the ID using the frontend's field name: league_id
+    code = request_data.league_id.upper() 
 
     if code not in league_db:
         raise HTTPException(status_code=404, detail="League not found.")
@@ -787,6 +788,7 @@ async def get_league_leaderboard(request_data: LeagueDetailsRequest):
         "leaderboard": leaderboard_with_names
     }
 # =======================================================================
+
     # 2. STATIC FILES MOUNT (This is where the magic happens)
 # This serves the index.html file from the 'static' directory when the user visits the root URL (/)
 # It is placed AFTER CORS but BEFORE your API routes.
