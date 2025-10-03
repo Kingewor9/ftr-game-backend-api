@@ -65,6 +65,10 @@
              cursor: pointer;
              margin-top: 10px;
              width: 100%; /* Default to full width for better mobile experience */
+             transition: background-color 0.2s;
+        }
+        .tg-button:active {
+            filter: brightness(85%);
         }
         /* Style for critical error message */
         .critical-error {
@@ -76,6 +80,58 @@
             white-space: pre-wrap;
             word-break: break-all;
         }
+
+        /* --- Modal Styles --- */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background-color: var(--tg-theme-bg-color, #fff);
+            color: var(--tg-theme-text-color, #333);
+            padding: 20px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+        .modal-content h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            border-bottom: 1px solid var(--tg-theme-secondary-bg-color);
+            padding-bottom: 5px;
+        }
+        .modal-content input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid var(--tg-theme-secondary-bg-color);
+            background-color: var(--tg-theme-secondary-bg-color);
+            color: var(--tg-theme-text-color);
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        .modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        .modal-buttons .tg-button {
+            width: auto;
+            margin-top: 0;
+        }
+        .modal-buttons .cancel-btn {
+            background-color: var(--tg-theme-secondary-bg-color);
+            color: var(--tg-theme-text-color);
+        }
     </style>
 </head>
 <body>
@@ -85,9 +141,9 @@
     <div class="header">Footy Riddles</div>
 
     <div class="content">
-        <div id="home-view">
+        <!-- HOME VIEW -->
+        <div id="home-view" style="display: none;">
             <h2>Welcome!</h2>
-            <!-- Display only the user's name, not the ID -->
             <p id="username-display">Loading...</p> 
             <div class="card">
                 <h3>Today's Quiz</h3>
@@ -96,22 +152,49 @@
             </div>
         </div>
 
+        <!-- LEAGUE VIEW -->
         <div id="league-view" style="display: none;">
             <h2>My Leagues</h2>
             <div id="leagues-list">Waiting for user authentication...</div>
+            <!-- The Create League button now opens the modal -->
             <button id="create-league-btn" class="tg-button">Create New League</button>
+            <button id="join-league-btn" class="tg-button" style="background-color: var(--tg-theme-hint-color);">Join League via Code</button>
         </div>
 
+        <!-- PROFILE VIEW -->
         <div id="profile-view" style="display: none;">
             <h2>My Profile</h2>
             <div id="profile-details">Loading profile...</div>
         </div>
     </div>
 
+    <!-- NAVIGATION BAR -->
     <div class="nav">
         <button class="nav-button" data-view="home">🏠 Home</button>
         <button class="nav-button" data-view="league">🏆 Leagues</button>
         <button class="nav-button" data-view="profile">👤 Profile</button>
+    </div>
+
+    <!-- CREATE LEAGUE MODAL -->
+    <div id="create-league-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <h3>Create New League</h3>
+            <form id="create-league-form">
+                <label for="league-name" style="font-size: 0.9em; display: block; margin-bottom: 5px;">League Name</label>
+                <input type="text" id="league-name" placeholder="E.g., Champions Challenge" required maxlength="50">
+                
+                <label for="is-private" style="font-size: 0.9em; display: block; margin-bottom: 5px;">
+                    <input type="checkbox" id="is-private" checked> Private League (Requires Invite Code)
+                </label>
+                
+                <div id="league-creation-status" style="margin-top: 10px; font-size: 0.9em; color: var(--tg-theme-link-color);"></div>
+
+                <div class="modal-buttons">
+                    <button type="button" class="tg-button cancel-btn" onclick="closeCreateLeagueModal()">Cancel</button>
+                    <button type="submit" class="tg-button">Create League</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <script>
@@ -123,9 +206,11 @@
         if (webApp) {
             webApp.ready();
             webApp.expand(); // Use full screen
+            // Apply theme parameters globally
             if (webApp.themeParams) {
                 document.body.style.backgroundColor = webApp.themeParams.bg_color;
                 document.body.style.color = webApp.themeParams.text_color;
+                // You can also adjust primary colors here if needed
             }
         } else {
              document.getElementById('username-display').innerText = "ERROR: Telegram WebApp not detected.";
@@ -153,7 +238,6 @@
                 
                 // 1. Check if the current key is a target key and the value is a valid ID format
                 if (targetKeys.includes(key.toLowerCase())) {
-                    // Check if the value is a number or a string containing only digits
                     if (value && (typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value)))) {
                          console.log(`[DEBUG] Found ID under key: ${key}`);
                          return String(value); // Return as string
@@ -181,6 +265,7 @@
             if (['POST', 'PUT', 'DELETE'].includes(methodUpper)) {
                 let finalData = { ...data }; 
                 if (currentUserId && endpoint !== '/auth/login') {
+                    // Automatically add the authenticated user ID for secured endpoints
                     finalData.telegram_id = currentUserId; 
                 }
                 
@@ -188,7 +273,7 @@
                 fetchOptions.body = JSON.stringify(finalData);
             
             } else if (methodUpper === 'GET') {
-                // For GET, we add the ID as a query parameter if needed.
+                // For GET, add the ID as a query parameter if explicitly needed (not used for daily_info anymore)
                 const params = new URLSearchParams();
                 if (currentUserId && data.include_user_id) { 
                      params.append('telegram_id', currentUserId);
@@ -228,7 +313,10 @@
                 if (error.message.includes("Failed to fetch")) {
                      webApp.showAlert("Backend Unreachable. Check deployment status.");
                 } else {
-                     webApp.showAlert(`Request Failed: ${error.message}`);
+                     // Check if this is a custom error message thrown by us
+                     if (!error.message.includes("API Error")) {
+                        webApp.showAlert(`Request Failed: ${error.message}`);
+                     }
                 }
                 
                 return { error: error.message };
@@ -267,7 +355,6 @@
                 const telegramId = findIdRecursively(data);
 
                 if (!telegramId) {
-                    // CRITICAL DIAGNOSTIC: show the entire structure of the response
                     const criticalMessage = `Authentication Failed: ID missing. Server Response Structure: ${JSON.stringify(data, null, 2)}`;
                     console.error(`[CRITICAL DIAGNOSTIC] ${criticalMessage}`);
                     
@@ -298,7 +385,7 @@
         async function loadHomeData() {
             document.getElementById('quiz-status').innerText = "Checking for daily quiz...";
             
-            // V17 FIX: Using the confirmed backend endpoint: /quiz/daily_info (POST)
+            // Confirmed working endpoint: /quiz/daily_info (POST)
             const quizEndpoint = '/quiz/daily_info'; 
             // fetchAPI handles POST and automatically includes telegram_id in the body
             const quizData = await fetchAPI(quizEndpoint, 'POST', {}); 
@@ -307,16 +394,11 @@
             const startQuizBtn = document.getElementById('start-quiz-btn');
 
             if (quizData.error) {
-                 // Check for specific 404 to provide a helpful message
-                if (quizData.error.includes("404: Endpoint /quiz/daily_info Not Found")) {
-                    quizStatusElement.innerHTML = `<strong>Error 404:</strong> Daily quiz endpoint not found. Please verify your backend path for <code>${quizEndpoint}</code>.`;
-                } else {
-                    quizStatusElement.innerText = "Error loading daily quiz data. See console for details.";
-                }
+                quizStatusElement.innerText = "Error loading daily quiz data. See console for details.";
                 startQuizBtn.style.display = 'none';
             } else {
                 // Assuming successful response structure:
-                quizStatusElement.innerHTML = `<strong>${quizData.quiz_name || 'Daily Quiz'}</strong> (${quizData.questions_count} Qs, ${quizData.points_per_question} pts/Q)`;
+                quizStatusElement.innerHTML = `<strong>${quizData.quiz_name || 'Daily Quiz'}</strong> (${quizData.questions_count || 5} Qs, ${quizData.points_per_question || 10} pts/Q)`;
                 startQuizBtn.style.display = 'block';
                 startQuizBtn.onclick = () => webApp.showAlert("Quiz starting logic goes here!"); 
             }
@@ -403,11 +485,62 @@
             }
         }
 
+        // --- 5. LEAGUE CREATION MODAL LOGIC ---
+        function openCreateLeagueModal() {
+            document.getElementById('create-league-modal').style.display = 'flex';
+            document.getElementById('league-creation-status').innerText = ''; // Clear previous status
+        }
+
+        function closeCreateLeagueModal() {
+            document.getElementById('create-league-modal').style.display = 'none';
+            document.getElementById('create-league-form').reset(); // Clear form inputs
+        }
+
+        async function handleCreateLeague(event) {
+            event.preventDefault(); // Stop default form submission
+            
+            const statusElement = document.getElementById('league-creation-status');
+            const leagueName = document.getElementById('league-name').value.trim();
+            const isPrivate = document.getElementById('is-private').checked;
+
+            if (!leagueName) {
+                statusElement.innerText = "League name is required!";
+                return;
+            }
+            
+            statusElement.innerText = 'Creating league...';
+
+            // Data structure based on typical FastAPI/Pydantic model:
+            const leagueData = {
+                league_name: leagueName,
+                is_private: isPrivate,
+                // telegram_id is automatically added by fetchAPI helper
+            };
+
+            const data = await fetchAPI('/league/create_league', 'POST', leagueData);
+
+            if (data.error) {
+                statusElement.style.color = 'var(--tg-theme-destructive-text-color)';
+                statusElement.innerText = `Creation Failed: ${data.error.substring(0, 50)}...`;
+            } else {
+                statusElement.style.color = 'var(--tg-theme-link-color)';
+                // Assuming successful response includes the new league ID or name
+                statusElement.innerHTML = `League <strong>${data.league_name || leagueName}</strong> created successfully! <br> Code: <strong>${data.invite_code || 'TBD'}</strong>`;
+                
+                // Close modal after a delay and refresh league list
+                setTimeout(() => {
+                    closeCreateLeagueModal();
+                    loadLeagues();
+                }, 1500); 
+            }
+        }
+
+        // --- 6. INITIALIZATION & EVENT LISTENERS ---
         async function initApp() {
             const userId = await authenticateUser();
 
             if (userId) {
-                // Feature Request: Start on the Leagues tab
+                // Start on the Leagues tab
                 switchView('league'); 
             } else {
                 // If auth fails, show home with the error message
@@ -415,14 +548,20 @@
             }
         }
         
-        // --- 5. EVENT LISTENERS ---
+        // Navigation listener
         document.querySelectorAll('.nav-button').forEach(button => {
             button.addEventListener('click', (e) => {
                 const view = e.target.getAttribute('data-view');
                 if (view) switchView(view);
             });
         });
+
+        // "Create League" button opens the modal
+        document.getElementById('create-league-btn').addEventListener('click', openCreateLeagueModal);
         
+        // Form submission listener for league creation
+        document.getElementById('create-league-form').addEventListener('submit', handleCreateLeague);
+
         // Initial call to start the process
         initApp();
         
