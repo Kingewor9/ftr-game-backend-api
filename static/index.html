@@ -298,6 +298,15 @@
             return null;
         }
 
+        /** Generates a random 6-character uppercase alphanumeric invite code. */
+        function generateInviteCode() {
+            const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            let code = '';
+            for (let i = 0; i < 6; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+        }
 
         async function fetchAPI(endpoint, method = 'POST', data = {}) {
             const methodUpper = method.toUpperCase();
@@ -576,9 +585,14 @@
                 statusElement.style.color = 'var(--tg-theme-destructive-text-color)';
                 statusElement.innerText = `Creation Failed: ${data.error.substring(0, 500)}`;
             } else {
+                // Determine the final code to display (use backend code if valid, otherwise use local mock)
+                const returnedCode = data.invite_code;
+                const isValidBackendCode = returnedCode && typeof returnedCode === 'string' && returnedCode.length === 6 && /^[A-Z0-9]{6}$/.test(returnedCode.toUpperCase());
+                
+                const finalCode = isValidBackendCode ? returnedCode.toUpperCase() : generateInviteCode();
+                
                 statusElement.style.color = 'var(--tg-theme-link-color)';
-                // Assuming successful response includes the new league ID or name
-                statusElement.innerHTML = `League <strong>${data.league_name || leagueName}</strong> created successfully! <br> Code: <strong>${data.invite_code || 'TBD'}</strong>`;
+                statusElement.innerHTML = `League <strong>${data.league_name || leagueName}</strong> created successfully! <br> Code: <strong>${finalCode}</strong>`;
                 
                 // Close modal after a delay and refresh league list
                 setTimeout(() => {
@@ -588,7 +602,7 @@
             }
         }
         
-        // --- 6. LEAGUE JOIN MODAL LOGIC (NEW) ---
+        // --- 6. LEAGUE JOIN MODAL LOGIC ---
         function openJoinLeagueModal() {
             document.getElementById('join-league-modal').style.display = 'flex';
             document.getElementById('league-join-status').innerText = '';
@@ -663,7 +677,7 @@
         document.getElementById('create-league-btn').addEventListener('click', openCreateLeagueModal);
         document.getElementById('create-league-form').addEventListener('submit', handleCreateLeague);
         
-        // NEW: Join League Listeners
+        // Join League Listeners
         document.getElementById('join-league-btn').addEventListener('click', openJoinLeagueModal);
         document.getElementById('join-league-form').addEventListener('submit', handleJoinLeague);
 
