@@ -537,8 +537,9 @@
             
             statusElement.innerText = 'Creating league...';
 
+            // FIX: Changed 'league_name' to 'name' to match FastAPI Pydantic model
             const leagueData = {
-                league_name: leagueName,
+                name: leagueName, 
                 is_private: isPrivate,
                 // telegram_id is automatically added by fetchAPI helper
             };
@@ -552,7 +553,6 @@
             } else {
                 statusElement.style.color = 'var(--tg-theme-link-color)';
                 // Assuming successful response includes the new league ID or name
-                // If your backend returns the entire new league object, adjust key names as needed
                 statusElement.innerHTML = `League <strong>${data.league_name || leagueName}</strong> created successfully! <br> Code: <strong>${data.invite_code || 'TBD'}</strong>`;
                 
                 // Close modal after a delay and refresh league list
