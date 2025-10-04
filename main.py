@@ -255,6 +255,14 @@ app.add_middleware(
     allow_headers=["*"], # Allow all headers 
 )
 
+# =======================================================================
+# >>> NEW: HEALTH CHECK ENDPOINT <<<
+# Use this to confirm the API is running and not being shadowed by the mount
+# =======================================================================
+@app.get("/api/status")
+async def health_check():
+    """A simple endpoint to verify the API server is alive."""
+    return {"status": "ok", "message": "API is running and accessible."}
 
 # =======================================================================
 
