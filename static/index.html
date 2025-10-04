@@ -694,12 +694,11 @@
         /** * 2. Show Leaderboard Function (fetches and renders the leaderboard)
          */
         async function loadLeaderboard(leagueId, contentElement) {
-            // API endpoint assumed: /league/leaderboard (POST)
-            // You may need to confirm this endpoint name with your backend
-            const data = await fetchAPI('/league/leaderboard', 'POST', {
-                league_id: leagueId,
-                // telegram_id is automatically added by fetchAPI helper
-            });
+    // Corrected API endpoint: /api/league/leaderboard (POST)
+    const data = await fetchAPI('/api/league/leaderboard', 'POST', { // <-- THIS IS THE ONLY LINE CHANGED
+        league_id: leagueId,
+        // telegram_id is automatically added by fetchAPI helper
+    });
 
             if (data.error) {
                 contentElement.innerHTML = `<p class="critical-error">Failed to load leaderboard: ${data.error.substring(0, 100)}</p>`;
