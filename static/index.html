@@ -692,16 +692,19 @@ async function openLeagueDetailModal(leagueId, leagueName) {
 }
 
 /** * 2. Show Leaderboard Function (fetches and renders the leaderboard)
- * FIX: Switched from POST to GET, and passed league_id in the URL query string.
+ * FIX: We are reverting to 'POST' because the server rejected 'GET' (405 error), 
+ * while keeping the correct '/api/' prefix from the previous fix. Data is passed in the body.
  */
 async function loadLeaderboard(leagueId, contentElement) {
-    // 1. Construct the endpoint using URL parameters for a GET request
-    const endpoint = `/api/league/leaderboard?league_id=${leagueId}`;
     
-    // 2. Call fetchAPI using the GET method and no payload (body)
-    const data = await fetchAPI(endpoint, 'GET'); 
+    // Combined Fix: Correct path (/api/...) AND required method (POST)
+    const data = await fetchAPI('/api/league/leaderboard', 'POST', { 
+        league_id: leagueId,
+        // telegram_id is automatically added by fetchAPI helper
+    });
 
     if (data.error) {
+        // If we get an error here, it means the API was reached, but something failed inside the server.
         contentElement.innerHTML = `<p class="critical-error">Failed to load leaderboard: ${data.error.substring(0, 100)}</p>`;
         return;
     }
@@ -745,8 +748,6 @@ async function loadLeaderboard(leagueId, contentElement) {
         contentElement.innerHTML = "<p style='text-align: center;'>No players found in this league yet.</p>";
     }
 }
-
-
 
         // --- 8. INITIALIZATION & EVENT LISTENERS ---
         async function initApp() {
