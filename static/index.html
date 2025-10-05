@@ -676,74 +676,76 @@
 
         // --- 7. LEAGUE DETAIL & LEADERBOARD LOGIC (New Functions) ---
 
-        function closeLeagueDetailModal() {
-            document.getElementById('league-detail-modal').style.display = 'none';
-        }
+function closeLeagueDetailModal() {
+    document.getElementById('league-detail-modal').style.display = 'none';
+}
 
-        /** * 1. New League Detail Modal Function (opens modal and starts loading leaderboard)
-         */
-        async function openLeagueDetailModal(leagueId, leagueName) {
-            document.getElementById('detail-modal-title').innerText = `${leagueName} Leaderboard`;
-            const contentElement = document.getElementById('leaderboard-content');
-            contentElement.innerHTML = '<p style="text-align: center;">Loading leaderboard...</p>';
-            document.getElementById('league-detail-modal').style.display = 'flex';
+/** * 1. New League Detail Modal Function (opens modal and starts loading leaderboard)
+ */
+async function openLeagueDetailModal(leagueId, leagueName) {
+    document.getElementById('detail-modal-title').innerText = `${leagueName} Leaderboard`;
+    const contentElement = document.getElementById('leaderboard-content');
+    contentElement.innerHTML = '<p style="text-align: center;">Loading leaderboard...</p>';
+    document.getElementById('league-detail-modal').style.display = 'flex';
 
-            await loadLeaderboard(leagueId, contentElement);
-        }
+    await loadLeaderboard(leagueId, contentElement);
+}
 
-        /** * 2. Show Leaderboard Function (fetches and renders the leaderboard)
-         */
-        async function loadLeaderboard(leagueId, contentElement) {
-    // Corrected API endpoint: /api/league/leaderboard (POST)
-    const data = await fetchAPI('/api/league/leaderboard', 'POST', { // <-- THIS IS THE ONLY LINE CHANGED
-        league_id: leagueId,
-        // telegram_id is automatically added by fetchAPI helper
-    });
+/** * 2. Show Leaderboard Function (fetches and renders the leaderboard)
+ * FIX: Switched from POST to GET, and passed league_id in the URL query string.
+ */
+async function loadLeaderboard(leagueId, contentElement) {
+    // 1. Construct the endpoint using URL parameters for a GET request
+    const endpoint = `/api/league/leaderboard?league_id=${leagueId}`;
+    
+    // 2. Call fetchAPI using the GET method and no payload (body)
+    const data = await fetchAPI(endpoint, 'GET'); 
 
-            if (data.error) {
-                contentElement.innerHTML = `<p class="critical-error">Failed to load leaderboard: ${data.error.substring(0, 100)}</p>`;
-                return;
-            }
+    if (data.error) {
+        contentElement.innerHTML = `<p class="critical-error">Failed to load leaderboard: ${data.error.substring(0, 100)}</p>`;
+        return;
+    }
 
-            if (data.leaderboard && data.leaderboard.length > 0) {
-                let html = '<table style="width: 100%; border-collapse: collapse;">';
-                
-                // Table Header
-                html += `
-                    <thead style="background-color: var(--tg-theme-secondary-bg-color);">
-                        <tr>
-                            <th style="padding: 10px; text-align: left;">Rank</th>
-                            <th style="padding: 10px; text-align: left;">Player</th>
-                            <th style="padding: 10px; text-align: right;">Points</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                `;
-                
-                // Table Rows
-                data.leaderboard.forEach((player, index) => {
-                    // Highlight the current user
-                    const isCurrentUser = String(player.telegram_id) === getUserId();
-                    const rowBgColor = isCurrentUser ? 'var(--tg-theme-link-color)' : 'transparent';
-                    const textColor = isCurrentUser ? 'var(--tg-theme-button-text-color)' : 'var(--tg-theme-text-color)';
-                    const borderStyle = isCurrentUser ? '2px solid var(--tg-theme-link-color)' : '1px solid var(--tg-theme-hint-color)';
+    if (data.leaderboard && data.leaderboard.length > 0) {
+        let html = '<table style="width: 100%; border-collapse: collapse;">';
+        
+        // Table Header
+        html += `
+            <thead style="background-color: var(--tg-theme-secondary-bg-color);">
+                <tr>
+                    <th style="padding: 10px; text-align: left;">Rank</th>
+                    <th style="padding: 10px; text-align: left;">Player</th>
+                    <th style="padding: 10px; text-align: right;">Points</th>
+                </tr>
+            </thead>
+            <tbody>
+        `;
+        
+        // Table Rows
+        data.leaderboard.forEach((player, index) => {
+            // Highlight the current user
+            const isCurrentUser = String(player.telegram_id) === getUserId();
+            const rowBgColor = isCurrentUser ? 'var(--tg-theme-link-color)' : 'transparent';
+            const textColor = isCurrentUser ? 'var(--tg-theme-button-text-color)' : 'var(--tg-theme-text-color)';
+            const borderStyle = isCurrentUser ? '2px solid var(--tg-theme-link-color)' : '1px solid var(--tg-theme-hint-color)';
 
-                    html += `
-                        <tr style="color: ${textColor}; background-color: ${isCurrentUser ? 'var(--tg-theme-link-color)' : 'transparent'}">
-                            <td style="padding: 10px; border-bottom: ${borderStyle}; font-weight: ${isCurrentUser ? 'bold' : 'normal'};">${index + 1}</td>
-                            <td style="padding: 10px; border-bottom: ${borderStyle}; font-weight: ${isCurrentUser ? 'bold' : 'normal'};">${player.username || 'Anonymous'}</td>
-                            <td style="padding: 10px; text-align: right; border-bottom: ${borderStyle}; font-weight: ${isCurrentUser ? 'bold' : 'normal'};">${player.total_points || 0}</td>
-                        </tr>
-                    `;
-                });
-                
-                html += '</tbody></table>';
-                contentElement.innerHTML = html;
-                
-            } else {
-                contentElement.innerHTML = "<p style='text-align: center;'>No players found in this league yet.</p>";
-            }
-        }
+            html += `
+                <tr style="color: ${textColor}; background-color: ${isCurrentUser ? 'var(--tg-theme-link-color)' : 'transparent'}">
+                    <td style="padding: 10px; border-bottom: ${borderStyle}; font-weight: ${isCurrentUser ? 'bold' : 'normal'};">${index + 1}</td>
+                    <td style="padding: 10px; border-bottom: ${borderStyle}; font-weight: ${isCurrentUser ? 'bold' : 'normal'};">${player.username || 'Anonymous'}</td>
+                    <td style="padding: 10px; text-align: right; border-bottom: ${borderStyle}; font-weight: ${isCurrentUser ? 'bold' : 'normal'};">${player.total_points || 0}</td>
+                </tr>
+            `;
+        });
+        
+        html += '</tbody></table>';
+        contentElement.innerHTML = html;
+        
+    } else {
+        contentElement.innerHTML = "<p style='text-align: center;'>No players found in this league yet.</p>";
+    }
+}
+
 
 
         // --- 8. INITIALIZATION & EVENT LISTENERS ---
