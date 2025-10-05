@@ -697,11 +697,12 @@ async function openLeagueDetailModal(leagueId, leagueName) {
  */
 async function loadLeaderboard(leagueId, contentElement) {
     
-    // Attempt 3: Trailing slash fix, using POST method.
-    const data = await fetchAPI('/api/league/leaderboard/', 'POST', { // NOTE THE NEW '/' at the end
+    // Final Fix: Path is now '/league/leaderboard/' (no '/api' prefix)
+    const data = await fetchAPI('/league/leaderboard/', 'POST', { // NOTE THE NEW PATH
         league_id: leagueId,
         // telegram_id is automatically added by fetchAPI helper
     });
+
 
     if (data.error) {
         // If we get an error here, it means the API was reached, but something failed inside the server.
