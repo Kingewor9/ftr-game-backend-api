@@ -747,7 +747,7 @@ async def search_leagues(search_data: LeagueSearch):
 # >>> NEW ENDPOINT TO FETCH A SPECIFIC LEAGUE'S LEADERBOARD <<<
 # UPDATED to use 'league_id' instead of 'code' in the request model
 # =======================================================================
-@app.post("/league/leaderboard")
+@app.post("/api/league/leaderboard")
 async def get_league_leaderboard(request_data: LeagueDetailsRequest):
     """
     Fetches the full member list for a specific league, sorted by points (the leaderboard).
