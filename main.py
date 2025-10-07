@@ -3,6 +3,7 @@ import hashlib
 import json
 from urllib.parse import unquote_plus
 from fastapi import FastAPI, Request, HTTPException, Body
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from urllib.parse import unquote_plus, parse_qsl # <-- CRITICAL NEW IMPORT
 from datetime import datetime, timedelta
@@ -73,13 +74,26 @@ logging.info(f"Firebase Config Keys: {list(firebaseConfig.keys()) if firebaseCon
 # This client will be set during the application startup phase.
 db: Optional[FirestoreClient] = None 
 
+# --- GLOBAL VARIABLES ---
+
+# 1. Database client (None until initialized)
+db: Optional[FirestoreClient] = None 
+# 2. Flag to track successful initialization
+is_initialized: bool = False
+
+
+# --- FIREBASE CONFIG (DUMMY PLACEHOLDER) ---
+firebaseConfig = {
+    "databaseURL": "https://your-project-id.firebaseio.com",
+}
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Handles application startup and shutdown events.
     Initializes Firebase Admin SDK using FIREBASE_CREDENTIALS.
     """
-    global db # Tell Python we are modifying the global 'db' variable
+    global db, is_initialized # Tell Python we are modifying the global 'db' variable
     
     logger.info("Application Startup: Starting Firebase Admin SDK Initialization...")
 
@@ -103,14 +117,19 @@ async def lifespan(app: FastAPI):
         
         # 3. Get the Firestore Client
         db = firestore.client()
+
+         # 4. CRITICAL SYNCHRONIZATION POINT
+        is_initialized = True 
         logger.info("Global Firestore client is ready.")
 
     except Exception as e:
         logger.critical(f"FATAL ERROR during Firebase initialization: {e}")
         # Setting db to None ensures that routes fail gracefully if the client is not available.
-        db = None 
+        db = None
+        is_initialized = False
 
-    # Yield control back to FastAPI to start accepting requests
+        # This yield is where the application starts accepting HTTP requests.
+    # It only runs AFTER all the setup above is complete.
     yield
 
     # Application shutdown (optional cleanup goes here)
@@ -137,14 +156,17 @@ app.add_middleware(
 
 # --- 3. Update the Database Dependency to use the global 'db' client ---
 
+# --- DATABASE DEPENDENCY ---
 def get_database() -> FirestoreClient:
     """Dependency for getting the Firestore client."""
-    # Check if the client was successfully initialized in the lifespan function
-    if db is None:
-        logger.error("Attempted to access Firestore before successful initialization.")
-        raise HTTPException(status_code=503, detail="Database service is unavailable.")
+    # We check both the db object AND the synchronization flag for robustness.
+    if db is None or not is_initialized:
+        logger.error("Attempted to access Firestore before successful initialization (db is None or is_initialized is False).")
+        # This raises the 503 error you are seeing, which is correct for handling the failure/race.
+        raise HTTPException(status_code=503, detail="Database service is unavailable. Server is initializing.")
         
     return db
+
 
 # --- FIREBASE PATH CONSTANTS ---
 
@@ -343,15 +365,28 @@ app.add_middleware(
 )
 
 # ----------------
-# HEALTH CHECK ROUTE
-# ----------------
-@app.get("/health", summary="Basic Health Check", response_model=Dict[str, str])
+# --- IMPROVED HEALTH CHECK ROUTE ---
+@app.get("/health", summary="Basic Health Check")
 async def health_check():
-    """Returns a simple status to confirm the application is running."""
-    # This endpoint does not depend on the database, preventing race conditions 
-    # during initial server startup/probes.
-    return {"status": "ok", "service": "Telegram Backend"}
+    """
+    Returns application status and database readiness.
+    This helps distinguish between app being 'up' and db being 'ready'.
+    """
+    global db, is_initialized
+    
+    response: Dict[str, str] = {"status": "ok", "service": "Telegram Backend"}
 
+    # Check if the critical dependency (database) is ready
+    if db is None or not is_initialized:
+        # If DB is not ready, return 503 for *readiness probes* that depend on it
+        response["db_status"] = "initializing"
+        return JSONResponse(
+            status_code=503,
+            content=response, # Return the status details
+        )
+
+    response["db_status"] = "ready"
+    return response
 # =======================================================================
 
 # --- CORE API Endpoints (Login and Profile - NOW PERSISTENT) ---
