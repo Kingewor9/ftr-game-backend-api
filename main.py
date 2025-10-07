@@ -19,7 +19,7 @@ from typing import Optional, Dict, Any, List # Required for Python 3.9+ type hin
 import firebase_admin
 from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.client import Client as FirestoreClient # For type hinting
-from google.cloud.firestore_v1.base_document import DocumentReference, DocumentSnapshot
+from google.cloud.firestore import DocumentReference, DocumentSnapshot
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
