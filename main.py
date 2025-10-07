@@ -20,6 +20,8 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.client import Client as FirestoreClient # For type hinting
 from google.cloud.firestore import DocumentReference, DocumentSnapshot
+from contextlib import asynccontextmanager
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -67,29 +69,82 @@ logging.info(f"Firebase Config Keys: {list(firebaseConfig.keys()) if firebaseCon
 # You can now use firebaseConfig and appId in your backend logic
 # Example: print(firebaseConfig.get('projectId', 'Project ID not found'))
 
-# A flag to ensure Firebase is initialized only once
-_firebase_initialized = False
+# Global variable to hold the initialized Firestore client
+# This client will be set during the application startup phase.
+db: Optional[FirestoreClient] = None 
 
-def initialize_firebase():
-    """Initializes Firebase Admin SDK."""
-    global _firebase_initialized
-    if not _firebase_initialized and firebaseConfig:
-        try:
-            # We use a placeholder credentials object; the environment handles auth
-            cred = credentials.Certificate(firebaseConfig)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Handles application startup and shutdown events.
+    Initializes Firebase Admin SDK using FIREBASE_CREDENTIALS.
+    """
+    global db # Tell Python we are modifying the global 'db' variable
+    
+    logger.info("Application Startup: Starting Firebase Admin SDK Initialization...")
+
+    try:
+        # 1. CRITICAL: Load the JSON credentials (Service Account Key)
+        # from the secure environment variable we discussed.
+        creds_json_string = os.environ.get("FIREBASE_CREDENTIALS")
+        
+        if not creds_json_string:
+            raise ValueError("FIREBASE_CREDENTIALS environment variable not set. Admin SDK cannot start.")
+
+        creds_dict = json.loads(creds_json_string)
+        cred = credentials.Certificate(creds_dict)
+
+        # 2. Initialize the Firebase App
+        if not firebase_admin._apps:
+            # We use the client config for the options (like project_id), 
+            # but the service account cert for authentication.
             firebase_admin.initialize_app(cred, firebaseConfig)
-            _firebase_initialized = True
-            print("Firebase Admin SDK initialized successfully.")
-        except Exception as e:
-            # This can fail in local dev without proper credentials
-            print(f"Error initializing Firebase Admin SDK: {e}")
+            logger.info("Firebase Admin SDK initialized successfully.")
+        
+        # 3. Get the Firestore Client
+        db = firestore.client()
+        logger.info("Global Firestore client is ready.")
+
+    except Exception as e:
+        logger.critical(f"FATAL ERROR during Firebase initialization: {e}")
+        # Setting db to None ensures that routes fail gracefully if the client is not available.
+        db = None 
+
+    # Yield control back to FastAPI to start accepting requests
+    yield
+
+    # Application shutdown (optional cleanup goes here)
+    logger.info("Application Shutdown: Cleanup complete.")
+
+
+# --- 2. Initialize the FastAPI Application with the Lifespan ---
+# You need to define your FastAPI app object here, using the lifespan function.
+app = FastAPI(
+    title="Telegram Quiz Backend", 
+    lifespan=lifespan # <-- Attach the lifespan function here
+)
+
+# CORS middleware setup (must be near the top after app definition)
+# Assuming you need this for local testing or cross-domain communication
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Adjust this in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# --- 3. Update the Database Dependency to use the global 'db' client ---
 
 def get_database() -> FirestoreClient:
     """Dependency for getting the Firestore client."""
-    if not _firebase_initialized:
-        initialize_firebase()
-    
-    return firestore.client()
+    # Check if the client was successfully initialized in the lifespan function
+    if db is None:
+        logger.error("Attempted to access Firestore before successful initialization.")
+        raise HTTPException(status_code=503, detail="Database service is unavailable.")
+        
+    return db
 
 # --- FIREBASE PATH CONSTANTS ---
 
