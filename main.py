@@ -342,14 +342,15 @@ app.add_middleware(
     allow_headers=["*"], # Allow all headers 
 )
 
-# =======================================================================
-# >>> NEW: HEALTH CHECK ENDPOINT <<<
-# Use this to confirm the API is running and not being shadowed by the mount
-# =======================================================================
-@app.get("/api/status")
+# ----------------
+# HEALTH CHECK ROUTE
+# ----------------
+@app.get("/health", summary="Basic Health Check", response_model=Dict[str, str])
 async def health_check():
-    """A simple endpoint to verify the API server is alive."""
-    return {"status": "ok", "message": "API is running and accessible."}
+    """Returns a simple status to confirm the application is running."""
+    # This endpoint does not depend on the database, preventing race conditions 
+    # during initial server startup/probes.
+    return {"status": "ok", "service": "Telegram Backend"}
 
 # =======================================================================
 
