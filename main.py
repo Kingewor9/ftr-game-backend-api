@@ -22,6 +22,7 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.client import Client as FirestoreClient # For type hinting
 from google.cloud.firestore import DocumentReference, DocumentSnapshot
 from contextlib import asynccontextmanager
+import time # <<< NEW: Required for checking auth_date expiry
 
 
 # Configure logging
@@ -259,43 +260,66 @@ user_quiz_progress = {}
 # --- Helper Functions ---
 
 
-# !!! CORRECTED AUTHENTICATION LOGIC !!!
+# !!! UPDATED: CORRECTED AUTHENTICATION LOGIC WITH TIMESTAMP CHECK !!!
 def validate_telegram_data(init_data: str) -> dict:
-    """ Validates the hash of the received Telegram Mini App init data. (UNCHANGED) """
-    # ... (Authentication Logic remains the same)
+    """ 
+    Validates the hash and checks for timestamp expiry of the received 
+    Telegram Mini App init data, following the 5-step official documentation. 
+    """
     print(f"\n[DEBUG] Raw init_data received: {init_data}")
     
     if not BOT_TOKEN:
         print("[FATAL ERROR] Cannot validate hash: BOT_TOKEN is missing (Value is None).")
         raise HTTPException(status_code=500, detail="Server misconfiguration: Telegram Bot Token is missing.")
 
-    params = parse_qsl(init_data, keep_blank_values=True, encoding='utf-8')
+    # Step 1: Parse and prepare data
+    # parse_qsl automatically URL-decodes the values.
+    params = parse_qsl(init_data, keep_blank_values=False, encoding='utf-8')
     
     hash_value = ""
     data_check_string_parts = []
     user_data_str = ""
-
+    auth_date_int: Optional[int] = None
+    
+    # 1a. Filter out the hash, collect all other key=value pairs, and check auth_date
     for key, value in params:
         if key == 'hash':
             hash_value = value
         else:
+            # Reconstruct the key=value string *before* sorting
             data_check_string_parts.append(f"{key}={value}")
+            
             if key == 'user':
                 user_data_str = value
+            elif key == 'auth_date':
+                try:
+                    auth_date_int = int(value)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Invalid 'auth_date' format.")
+
 
     if not hash_value or not user_data_str:
         print("[CRITICAL ERROR] Hash or User data was not found.")
         raise HTTPException(status_code=400, detail="Missing required Telegram data.")
-        
+    
+    # Check 1b. Validate Auth Date (prevents replay attacks)
+    MAX_AUTH_AGE_SECONDS = 86400 # 24 hours
+    if not auth_date_int or (time.time() - auth_date_int) > MAX_AUTH_AGE_SECONDS:
+        print("[ERROR] Authorization data has expired or is missing 'auth_date'.")
+        raise HTTPException(status_code=403, detail="Authorization data expired or invalid.")
+
+    # 1c. Sort and join: Sorts by key (e.g., auth_date comes before query_id)
     data_check_string_parts.sort()
     data_check_string = "\n".join(data_check_string_parts)
     
+    # Step 2 & 3: Create the key using the Bot Token and "WebAppData"
     secret_key = hmac.new(
         key="WebAppData".encode('utf8'), 
         msg=BOT_TOKEN.encode('utf8'), 
         digestmod=hashlib.sha256
     ).digest()
 
+    # Step 4: Create and Compare Init Data Signature
     calculated_hash = hmac.new(
         secret_key,
         msg=data_check_string.encode('utf8'),
@@ -304,11 +328,14 @@ def validate_telegram_data(init_data: str) -> dict:
 
     if calculated_hash != hash_value:
         print(f"[ERROR] Hash Mismatch Detected! Calculated: {calculated_hash}, Received: {hash_value}")
+        print(f"Data String Used for Hashing:\n{data_check_string}")
         raise HTTPException(status_code=403, detail="Invalid Telegram data hash.")
     
+    # Step 5: Success!
     print(f"[SUCCESS] Hash validated successfully: {calculated_hash}")
 
     try:
+        # The 'user' value itself is URL-encoded JSON, so we unquote it and parse
         user_info = json.loads(unquote_plus(user_data_str))
         return user_info
     except json.JSONDecodeError as e:
@@ -333,7 +360,6 @@ def generate_league_code(db: FirestoreClient, length=6) -> str:
             return code
             
     raise HTTPException(status_code=500, detail="Could not generate a unique league code. Please try again.")
-
 
 # --- API Setup ---
 app = FastAPI()
@@ -364,13 +390,11 @@ app.add_middleware(
     allow_headers=["*"], # Allow all headers 
 )
 
-# ----------------
 # --- IMPROVED HEALTH CHECK ROUTE ---
 @app.get("/health", summary="Basic Health Check")
 async def health_check():
     """
     Returns application status and database readiness.
-    This helps distinguish between app being 'up' and db being 'ready'.
     """
     global db, is_initialized
     
@@ -378,7 +402,6 @@ async def health_check():
 
     # Check if the critical dependency (database) is ready
     if db is None or not is_initialized:
-        # If DB is not ready, return 503 for *readiness probes* that depend on it
         response["db_status"] = "initializing"
         return JSONResponse(
             status_code=503,
@@ -391,17 +414,19 @@ async def health_check():
 
 # --- CORE API Endpoints (Login and Profile - NOW PERSISTENT) ---
 
-
 @app.post("/auth/login")
 async def telegram_login(request: Request, db: FirestoreClient = Depends(get_database)):
     """Authenticates the user and retrieves/creates a persistent profile."""
     try:
+        # NOTE: The frontend sends the raw 'initData' string in the body, which we decode.
         body = await request.body()
         init_data = body.decode('utf-8')
         
+        # 1. VALIDATE THE DATA (CRITICAL STEP)
         user_info = validate_telegram_data(init_data)
         telegram_id = str(user_info.get("id"))
         
+        # 2. FIREBASE USER MANAGEMENT
         user_ref: DocumentReference = db.collection(USERS_PROFILE_COLLECTION_PATH).document(telegram_id)
         user_doc: DocumentSnapshot = user_ref.get()
         
@@ -424,15 +449,32 @@ async def telegram_login(request: Request, db: FirestoreClient = Depends(get_dat
                 "best_streak": 0,
                 "leagues": {}, # {code: league_points}
                 "past_accuracy": [0, 0, 0], 
-                "preferences": NotificationPreferences().dict(),
+                # Ensure preferences has default values for new users
+                "preferences": NotificationPreferences().dict(), 
                 "completed_quizzes": [] 
             }
+            # Add other necessary fields from user_info to the profile for better data integrity
+            new_user.update({
+                "first_name": user_info.get("first_name"),
+                "last_name": user_info.get("last_name"),
+                "language_code": user_info.get("language_code"),
+                "is_premium": user_info.get("is_premium", False)
+            })
+            
             user_ref.set(new_user)
             user_profile = new_user
             print(f"New persistent user created: {username} (ID: {telegram_id})")
         else:
             # RETRIEVE EXISTING USER PROFILE (Persistent)
             user_profile = user_doc.to_dict()
+            print(f"Existing persistent user retrieved: {user_profile.get('username')} (ID: {telegram_id})")
+            
+            # OPTIONAL: Update basic profile details (like username or avatar) from Telegram data on login
+            user_ref.update({
+                "username": user_info.get("username") or user_info.get("first_name"),
+                "is_premium": user_info.get("is_premium", False),
+                "last_login": datetime.now() # Useful for activity tracking
+            })
             
         return {
             "status": "success",
@@ -441,10 +483,15 @@ async def telegram_login(request: Request, db: FirestoreClient = Depends(get_dat
         }
 
     except HTTPException as e:
+        # Propagate validation errors (403, 400, etc.)
         raise e
     except Exception as e:
-        print(f"An error occurred during login: {e}")
+        # Catch any unexpected errors (e.g., database connection failure or data structure crash)
+        print(f"[CRASH] An internal server error occurred during login: {e}")
+        logger.exception("Login route failed due to unhandled exception.")
         raise HTTPException(status_code=500, detail="An internal server error occurred.")
+
+
 
 @app.put("/profile/edit")
 async def edit_profile(profile_data: UserProfileEdit, db: FirestoreClient = Depends(get_database)):
@@ -1003,6 +1050,10 @@ async def get_league_leaderboard(request_data: LeagueDetailsRequest, db: Firesto
         "league_code": code,
         "leaderboard": leaderboard_with_names
     }
+
+@app.get("/")
+def read_root():
+    return {"message": "Telegram Quiz Backend is running. Access /health for status."}
 
 # --- STATIC FILES MOUNT ---
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
