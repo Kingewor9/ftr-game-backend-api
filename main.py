@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, HTTPException, Body
 from pydantic import BaseModel, Field
 from urllib.parse import unquote_plus, parse_qsl # <-- CRITICAL NEW IMPORT
 from datetime import datetime, timedelta
+from fastapi import Depends
 import os
 import random
 import logging
@@ -14,7 +15,11 @@ import string
 from fastapi.middleware.cors import CORSMiddleware 
 # >>> REQUIRED IMPORT FOR SERVING HTML FRONTEND <<<
 from fastapi.staticfiles import StaticFiles
-from typing import Optional # Required for Python 3.9+ type hinting
+from typing import Optional, Dict, Any, List # Required for Python 3.9+ type hinting
+import firebase_admin
+from firebase_admin import credentials, firestore
+from google.cloud.firestore_v1.client import Client as FirestoreClient # For type hinting
+from google.cloud.firestore_v1.base_document import DocumentReference, DocumentSnapshot
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -31,6 +36,68 @@ else:
 
 # Define the admin's Telegram ID for exclusive access to admin endpoints
 ADMIN_TELEGRAM_ID = "1474715816"
+
+# 1. Retrieve the raw JSON string from the environment variable
+# We use .get() for safety and provide a default empty string if the variable isn't set.
+raw_firebase_config = os.environ.get('__FIREBASE_CONFIG', '')
+
+# 2. Parse the JSON string into a Python dictionary.
+# If the string is empty or parsing fails, we default to an empty dictionary.
+try:
+    if raw_firebase_config:
+        firebaseConfig = json.loads(raw_firebase_config)
+    else:
+        firebaseConfig = {}
+        logging.warning("Environment variable '__FIREBASE_CONFIG' not found or is empty.")
+except json.JSONDecodeError as e:
+    logging.error(f"Failed to decode Firebase config JSON: {e}")
+    firebaseConfig = {}
+
+
+# 3. Retrieve the Application ID from the environment variable.
+# Default to 'default-app-id' if not set.
+appId = os.environ.get('__APP_ID', 'default-app-id')
+
+
+# --- Verification (for your own testing) ---
+
+logging.info(f"Loaded App ID: {appId}")
+logging.info(f"Firebase Config Keys: {list(firebaseConfig.keys()) if firebaseConfig else 'No Config'}")
+
+# You can now use firebaseConfig and appId in your backend logic
+# Example: print(firebaseConfig.get('projectId', 'Project ID not found'))
+
+# A flag to ensure Firebase is initialized only once
+_firebase_initialized = False
+
+def initialize_firebase():
+    """Initializes Firebase Admin SDK."""
+    global _firebase_initialized
+    if not _firebase_initialized and firebaseConfig:
+        try:
+            # We use a placeholder credentials object; the environment handles auth
+            cred = credentials.Certificate(firebaseConfig)
+            firebase_admin.initialize_app(cred, firebaseConfig)
+            _firebase_initialized = True
+            print("Firebase Admin SDK initialized successfully.")
+        except Exception as e:
+            # This can fail in local dev without proper credentials
+            print(f"Error initializing Firebase Admin SDK: {e}")
+
+def get_database() -> FirestoreClient:
+    """Dependency for getting the Firestore client."""
+    if not _firebase_initialized:
+        initialize_firebase()
+    
+    return firestore.client()
+
+# --- FIREBASE PATH CONSTANTS ---
+
+# Leagues are public data that all users of the app can access by code
+LEAGUES_COLLECTION_PATH = f"artifacts/{appId}/public/data/leagues"
+# User profiles are stored privately by user ID
+USERS_PROFILE_COLLECTION_PATH = f"artifacts/{appId}/users"
+
 
 # --- Pydantic Data Models ---
 
@@ -100,9 +167,8 @@ class LeagueDetailsRequest(BaseModel):
     telegram_id: str = Field(..., description="The user requesting the leaderboard.")
     league_id: str = Field(..., description="The 6-digit code/ID of the league to view.")
 
-
-# --- Temporary "Database" ---
-user_db = {} 
+# --- Global In-Memory State (Used only for Daily Quiz, NOT for persistent user/league data) ---
+# NOTE: user_db and league_db global dictionaries have been REMOVED as they are now replaced by Firestore.
 
 daily_quiz_state = {
     "quiz_id": 0,
@@ -112,48 +178,26 @@ daily_quiz_state = {
 }
 user_quiz_progress = {} 
 
-# NEW LEAGUE DATABASE: Key is the 6-digit code
-league_db = {}
-# Example League Structure:
-# "ABC123": {
-#     "code": "ABC123",
-#     "name": "My Pro League",
-#     "owner_id": "12345",
-#     "is_private": True,
-#     "member_limit": 50,
-#     "members": [
-#         {"telegram_id": "12345", "league_points": 100},
-#         {"telegram_id": "67890", "league_points": 50},
-#     ]
-# }
-
-
-
 
 # --- Helper Functions ---
 
 
 # !!! CORRECTED AUTHENTICATION LOGIC !!!
 def validate_telegram_data(init_data: str) -> dict:
-    """
-    Validates the hash of the received Telegram Mini App init data using the 
-    required two-step HMAC-SHA256 process based on Telegram documentation.
-    """
-    
+    """ Validates the hash of the received Telegram Mini App init data. (UNCHANGED) """
+    # ... (Authentication Logic remains the same)
     print(f"\n[DEBUG] Raw init_data received: {init_data}")
     
     if not BOT_TOKEN:
         print("[FATAL ERROR] Cannot validate hash: BOT_TOKEN is missing (Value is None).")
         raise HTTPException(status_code=500, detail="Server misconfiguration: Telegram Bot Token is missing.")
 
-    # 1. Decode and parse the query string into a list of (key, value) tuples
     params = parse_qsl(init_data, keep_blank_values=True, encoding='utf-8')
     
     hash_value = ""
     data_check_string_parts = []
     user_data_str = ""
 
-    # 2. Extract hash and build the data check list
     for key, value in params:
         if key == 'hash':
             hash_value = value
@@ -162,51 +206,31 @@ def validate_telegram_data(init_data: str) -> dict:
             if key == 'user':
                 user_data_str = value
 
-    if not hash_value:
-        print("[CRITICAL ERROR] Hash value was not found in the received data string.")
-        raise HTTPException(status_code=400, detail="Missing Telegram data hash.")
-
-    if not user_data_str:
-        print("[CRITICAL ERROR] User data was not found in the received data string.")
-        raise HTTPException(status_code=400, detail="Missing Telegram user data.")
+    if not hash_value or not user_data_str:
+        print("[CRITICAL ERROR] Hash or User data was not found.")
+        raise HTTPException(status_code=400, detail="Missing required Telegram data.")
         
-    # 3. Sort the parts alphabetically and join them with a newline (\n)
     data_check_string_parts.sort()
     data_check_string = "\n".join(data_check_string_parts)
     
-    # --- START DIAGNOSTIC LOGS ---
-    print(f"[DIAGNOSTIC] Bot Token Length: {len(BOT_TOKEN)}")
-    print(f"[DIAGNOSTIC] First 5 Chars of Token: {BOT_TOKEN[:5]}...")
-    print(f"[DEBUG] Data Check String for Hashing: \n---BEGIN---\n{data_check_string}\n---END---")
-    # --- END DIAGNOSTIC LOGS ---
-    
-    # 4. Calculate the expected hash (Two-step process implemented here)
-    
-    # Step 1: Calculate the secret key (HMAC-SHA256 of 'WebAppData' key applied to the Bot Token)
     secret_key = hmac.new(
         key="WebAppData".encode('utf8'), 
         msg=BOT_TOKEN.encode('utf8'), 
         digestmod=hashlib.sha256
     ).digest()
 
-    # Step 2: Calculate the final hash (HMAC-SHA256 of the data check string applied to the secret key)
     calculated_hash = hmac.new(
         secret_key,
         msg=data_check_string.encode('utf8'),
         digestmod=hashlib.sha256
     ).hexdigest()
 
-    # 5. Compare hashes
     if calculated_hash != hash_value:
-        print(f"[ERROR] Hash Mismatch Detected!")
-        print(f"[ERROR] Calculated Hash: {calculated_hash}")
-        print(f"[ERROR] Received Hash: {hash_value}")
+        print(f"[ERROR] Hash Mismatch Detected! Calculated: {calculated_hash}, Received: {hash_value}")
         raise HTTPException(status_code=403, detail="Invalid Telegram data hash.")
     
-    # --- SUCCESS LOG ---
     print(f"[SUCCESS] Hash validated successfully: {calculated_hash}")
 
-    # 6. Extract user info
     try:
         user_info = json.loads(unquote_plus(user_data_str))
         return user_info
@@ -218,13 +242,21 @@ def validate_telegram_data(init_data: str) -> dict:
 def calculate_accuracy(correct, total):
     return round((correct / total) * 100) if total > 0 else 0
 
-def generate_league_code(length=6):
-    """Generates a unique 6-digit alphanumeric code."""
+def generate_league_code(db: FirestoreClient, length=6) -> str:
+    """Generates a unique 6-digit alphanumeric code by checking Firestore."""
     chars = string.ascii_uppercase + string.digits
-    while True:
+    collection_ref = db.collection(LEAGUES_COLLECTION_PATH)
+    
+    for _ in range(10): # Try up to 10 times to find a unique code
         code = ''.join(random.choice(chars) for _ in range(length))
-        if code not in league_db:
+        
+        # Check if the document (league) exists in the persistent store
+        doc = collection_ref.document(code).get()
+        if not doc.exists:
             return code
+            
+    raise HTTPException(status_code=500, detail="Could not generate a unique league code. Please try again.")
+
 
 # --- API Setup ---
 app = FastAPI()
@@ -266,11 +298,12 @@ async def health_check():
 
 # =======================================================================
 
-# --- CORE API Endpoints (Login and Profile - UNCHANGED) ---
+# --- CORE API Endpoints (Login and Profile - NOW PERSISTENT) ---
+
 
 @app.post("/auth/login")
-async def telegram_login(request: Request):
-    # ... (Login logic)
+async def telegram_login(request: Request, db: FirestoreClient = Depends(get_database)):
+    """Authenticates the user and retrieves/creates a persistent profile."""
     try:
         body = await request.body()
         init_data = body.decode('utf-8')
@@ -278,9 +311,14 @@ async def telegram_login(request: Request):
         user_info = validate_telegram_data(init_data)
         telegram_id = str(user_info.get("id"))
         
-        if telegram_id not in user_db:
+        user_ref: DocumentReference = db.collection(USERS_PROFILE_COLLECTION_PATH).document(telegram_id)
+        user_doc: DocumentSnapshot = user_ref.get()
+        
+        user_profile: Dict[str, Any]
+        
+        if not user_doc.exists:
+            # CREATE NEW USER PROFILE (Persistent)
             username = user_info.get("username") or user_info.get("first_name")
-            
             new_user = {
                 "telegram_id": telegram_id,
                 "username": username,
@@ -293,65 +331,83 @@ async def telegram_login(request: Request):
                 "accuracy_rate": 0,
                 "current_streak": 0,
                 "best_streak": 0,
-                "leagues": {}, # MODIFIED: Leagues is now a dict {code: league_points}
+                "leagues": {}, # {code: league_points}
                 "past_accuracy": [0, 0, 0], 
                 "preferences": NotificationPreferences().dict(),
                 "completed_quizzes": [] 
             }
-            user_db[telegram_id] = new_user
-            print(f"New user created: {username} (ID: {telegram_id})")
-        
+            user_ref.set(new_user)
+            user_profile = new_user
+            print(f"New persistent user created: {username} (ID: {telegram_id})")
+        else:
+            # RETRIEVE EXISTING USER PROFILE (Persistent)
+            user_profile = user_doc.to_dict()
+            
         return {
             "status": "success",
-            "message": "User authenticated and profile retrieved.",
-            "user_profile": user_db[telegram_id],
+            "message": "User authenticated and persistent profile retrieved.",
+            "user_profile": user_profile,
         }
 
     except HTTPException as e:
         raise e
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"An error occurred during login: {e}")
         raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
 @app.put("/profile/edit")
-async def edit_profile(profile_data: UserProfileEdit):
-    # ... (Existing edit_profile logic)
+async def edit_profile(profile_data: UserProfileEdit, db: FirestoreClient = Depends(get_database)):
+    """Updates user profile fields and saves to Firestore."""
     user_id = profile_data.telegram_id
     
-    if user_id not in user_db:
+    user_ref = db.collection(USERS_PROFILE_COLLECTION_PATH).document(user_id)
+    user_doc = user_ref.get()
+
+    if not user_doc.exists:
         raise HTTPException(status_code=404, detail="User not found.")
         
-    user_db[user_id]["username"] = profile_data.username
-    user_db[user_id]["email"] = profile_data.email
-    user_db[user_id]["avatar_url"] = profile_data.avatar_url
+    user_ref.update({
+        "username": profile_data.username,
+        "email": profile_data.email,
+        "avatar_url": profile_data.avatar_url
+    })
+    
+    updated_profile = user_ref.get().to_dict()
     
     return {
         "status": "success",
         "message": "Profile updated successfully.",
-        "user_profile": user_db[user_id]
+        "user_profile": updated_profile
     }
 
 @app.put("/profile/preferences")
-async def update_preferences(prefs_data: UserPreferencesUpdate):
-    # ... (Existing update_preferences logic)
+async def update_preferences(prefs_data: UserPreferencesUpdate, db: FirestoreClient = Depends(get_database)):
+    """Updates user notification preferences and saves to Firestore."""
     user_id = prefs_data.telegram_id
     
-    if user_id not in user_db:
+    user_ref = db.collection(USERS_PROFILE_COLLECTION_PATH).document(user_id)
+    user_doc = user_ref.get()
+    
+    if not user_doc.exists:
         raise HTTPException(status_code=404, detail="User not found.")
         
-    user_db[user_id]["preferences"] = prefs_data.preferences.dict()
+    user_ref.update({
+        "preferences": prefs_data.preferences.dict()
+    })
     
+    updated_profile = user_ref.get().to_dict()
+
     return {
         "status": "success",
         "message": "Notification preferences updated successfully.",
-        "user_profile": user_db[user_id]
+        "user_profile": updated_profile
     }
 
-# --- QUIZ ADMIN/GAMEPLAY ENDPOINTS (UNCHANGED except for leagues logic in results) ---
+# --- QUIZ ADMIN/GAMEPLAY ENDPOINTS (UPDATED to reference user profile) ---
 
 @app.post("/admin/set_daily_quiz")
 async def set_daily_quiz(quiz_data: DailyQuizData, request: Request):
-    # ... (Admin logic - UNCHANGED)
+    # This logic remains in-memory as the quiz state is only for the current day
     daily_quiz_state["quiz_id"] += 1
     daily_quiz_state["quiz_data"] = quiz_data
     daily_quiz_state["start_time"] = datetime.now()
@@ -369,12 +425,9 @@ async def set_daily_quiz(quiz_data: DailyQuizData, request: Request):
         }
     }
 
-class TelegramID(BaseModel):
-    telegram_id: str = Field(..., description="The unique ID of the Telegram user.")
-
 @app.post("/quiz/daily_info")
-async def get_daily_quiz_info(user_request: TelegramID):
-    # ... (Quiz info logic - UNCHANGED)
+async def get_daily_quiz_info(user_request: TelegramID, db: FirestoreClient = Depends(get_database)):
+    """Fetches quiz status, reading user's completion status from Firestore."""
     telegram_id = user_request.telegram_id
     quiz_id = daily_quiz_state["quiz_id"]
     quiz_data = daily_quiz_state["quiz_data"]
@@ -382,14 +435,18 @@ async def get_daily_quiz_info(user_request: TelegramID):
     if quiz_data is None:
         return {"status": "no_quiz", "message": "No quiz has been set for today."}
 
-    user_profile = user_db.get(telegram_id)
-    if not user_profile:
+    user_ref = db.collection(USERS_PROFILE_COLLECTION_PATH).document(telegram_id)
+    user_doc = user_ref.get()
+    
+    if not user_doc.exists:
         raise HTTPException(status_code=404, detail="User not found.")
+        
+    user_profile = user_doc.to_dict()
 
     if daily_quiz_state["expiration_time"] < datetime.now():
         return {"status": "expired", "message": "The daily quiz has expired."}
 
-    has_completed = quiz_id in user_profile["completed_quizzes"]
+    has_completed = quiz_id in user_profile.get("completed_quizzes", [])
     total_points = len(quiz_data.questions) * quiz_data.points_per_question
 
     return {
@@ -406,8 +463,8 @@ async def get_daily_quiz_info(user_request: TelegramID):
     }
 
 @app.post("/quiz/start_session")
-async def start_quiz_session(user_request: TelegramID):
-    # ... (Quiz start session logic - UNCHANGED)
+async def start_quiz_session(user_request: TelegramID, db: FirestoreClient = Depends(get_database)):
+    """Starts the quiz session, checking user status against Firestore."""
     telegram_id = user_request.telegram_id
     quiz_id = daily_quiz_state["quiz_id"]
     quiz_data = daily_quiz_state["quiz_data"]
@@ -415,11 +472,15 @@ async def start_quiz_session(user_request: TelegramID):
     if quiz_data is None:
         raise HTTPException(status_code=404, detail="No active quiz available.")
 
-    user_profile = user_db.get(telegram_id)
-    if not user_profile:
+    user_ref = db.collection(USERS_PROFILE_COLLECTION_PATH).document(telegram_id)
+    user_doc = user_ref.get()
+    
+    if not user_doc.exists:
         raise HTTPException(status_code=404, detail="User not found.")
-
-    if quiz_id in user_profile["completed_quizzes"]:
+    
+    user_profile = user_doc.to_dict()
+    
+    if quiz_id in user_profile.get("completed_quizzes", []):
         raise HTTPException(status_code=400, detail="You have already completed this quiz.")
 
     user_quiz_progress[telegram_id] = {
@@ -443,7 +504,7 @@ async def start_quiz_session(user_request: TelegramID):
 
 @app.post("/quiz/answer_question")
 async def submit_quiz_answer(submission: AnswerSubmission):
-    # ... (Quiz answer logic - UNCHANGED)
+    """Submits the answer (logic remains in-memory progress dict)."""
     quiz_id = daily_quiz_state["quiz_id"]
     quiz_data = daily_quiz_state["quiz_data"]
     
@@ -491,93 +552,108 @@ async def submit_quiz_answer(submission: AnswerSubmission):
     return response
 
 @app.post("/quiz/results")
-async def finalize_quiz_results(user_request: TelegramID):
+async def finalize_quiz_results(user_request: TelegramID, db: FirestoreClient = Depends(get_database)):
     """
-    Finalizes the quiz, updates user's permanent stats, and prepares for 'Back to Quiz' button.
+    Finalizes the quiz, updates user's persistent stats, and updates all joined leagues in Firestore.
     """
     telegram_id = user_request.telegram_id
     quiz_id = daily_quiz_state["quiz_id"]
-    user_profile = user_db.get(telegram_id)
     user_progress = user_quiz_progress.get(telegram_id)
 
-    if not user_profile or not user_progress or user_progress["quiz_id"] != quiz_id:
+    # 1. Fetch User Profile
+    user_ref = db.collection(USERS_PROFILE_COLLECTION_PATH).document(telegram_id)
+    user_doc = user_ref.get()
+    
+    if not user_doc.exists or not user_progress or user_progress["quiz_id"] != quiz_id:
         raise HTTPException(status_code=400, detail="Invalid quiz session or user data.")
     
-    # Calculate league points (just use the current score for now)
+    user_profile = user_doc.to_dict()
     league_points_earned = user_progress["current_score"]
-
-    # 1. Update Permanent User Stats
-    is_perfect_score = user_progress["correct_count"] == len(daily_quiz_state["quiz_data"].questions)
+    total_questions = len(daily_quiz_state["quiz_data"].questions)
+    
+    # 2. Update Persistent User Stats
+    is_perfect_score = user_progress["correct_count"] == total_questions
     
     user_profile["overall_score"] += user_progress["current_score"]
     user_profile["total_quizzes_answered"] += 1
     user_profile["correct_answers"] += user_progress["correct_count"]
     user_profile["completed_quizzes"].append(quiz_id)
 
-    # 2. Update Streak
-    if is_perfect_score:
-        user_profile["current_streak"] += 1
-    else:
-        user_profile["current_streak"] = 0 
-    
-    if user_profile["current_streak"] > user_profile["best_streak"]:
-        user_profile["best_streak"] = user_profile["current_streak"]
-        
-    # 3. Update Accuracy and History
-    yesterday_accuracy = user_profile["past_accuracy"][2] 
-    
-    user_profile["past_accuracy"][0] = user_profile["past_accuracy"][1]
-    user_profile["past_accuracy"][1] = yesterday_accuracy
-    
-    today_accuracy = calculate_accuracy(
-        user_progress["correct_count"], 
-        len(daily_quiz_state["quiz_data"].questions)
-    )
-    user_profile["past_accuracy"][2] = today_accuracy
+    # Update Streak and Accuracy logic
+    user_profile["current_streak"] = user_profile.get("current_streak", 0) + 1 if is_perfect_score else 0
+    user_profile["best_streak"] = max(user_profile.get("best_streak", 0), user_profile["current_streak"])
+
+    # Update Accuracy History
+    past_accuracy = user_profile.get("past_accuracy", [0, 0, 0])
+    past_accuracy[0], past_accuracy[1] = past_accuracy[1], past_accuracy[2]
+    today_accuracy = calculate_accuracy(user_progress["correct_count"], total_questions)
+    past_accuracy[2] = today_accuracy
+    user_profile["past_accuracy"] = past_accuracy
     
     user_profile["accuracy_rate"] = calculate_accuracy(
         user_profile["correct_answers"], 
         user_profile["total_quizzes_answered"]
     )
     
-    # 4. NEW: Update League Scores
-    for code in user_profile["leagues"].keys():
-        if code in league_db:
-            # Update points in user's profile dict
-            user_profile["leagues"][code] += league_points_earned
+    # 3. Update League Scores (MUST USE FIRESTORE NOW)
+    leagues_to_update = user_profile.get("leagues", {}).keys()
+    
+    for code in leagues_to_update:
+        league_ref = db.collection(LEAGUES_COLLECTION_PATH).document(code)
+        league_doc = league_ref.get()
+        
+        if league_doc.exists:
+            league = league_doc.to_dict()
             
-            # Update points in the league_db member list
-            league = league_db[code]
-            for member in league["members"]:
-                if member["telegram_id"] == telegram_id:
-                    member["league_points"] += league_points_earned
+            # Update user's points reference in their profile
+            user_profile["leagues"][code] = user_profile["leagues"].get(code, 0) + league_points_earned
+            
+            # Update points in the league's persistent member list
+            members_list = league.get("members", [])
+            
+            for member in members_list:
+                if member.get("telegram_id") == telegram_id:
+                    member["league_points"] = member.get("league_points", 0) + league_points_earned
                     break
+            
+            # Save the updated league document back to Firestore
+            league_ref.update({"members": members_list})
 
+    # 4. Save the updated user profile back to Firestore
+    user_ref.set(user_profile)
+    
     # 5. Cleanup and Return
     del user_quiz_progress[telegram_id]
     
     return {
         "status": "complete",
-        "message": "Quiz completed successfully. Stats updated.",
+        "message": "Quiz completed successfully. Persistent stats updated.",
         "score_earned": user_progress["current_score"],
         "correct_count": user_progress["correct_count"],
-        "total_questions": len(daily_quiz_state["quiz_data"].questions),
+        "total_questions": total_questions,
         "user_profile": user_profile
     }
 
-# --- NEW: LEAGUE ENDPOINTS ---
+# --- NEW: LEAGUE ENDPOINTS (ALL NOW PERSISTENT) ---
 
 @app.post("/league/create")
-async def create_league(league_data: LeagueCreation):
+async def create_league(league_data: LeagueCreation, db: FirestoreClient = Depends(get_database)):
     """
-    Creates a new league and enrolls the creator as the first member.
+    Creates a new league and enrolls the creator as the first member, saving it to Firestore.
     """
     creator_id = league_data.telegram_id
-    if creator_id not in user_db:
-        raise HTTPException(status_code=404, detail="Creator not found.")
+    
+    # 1. Fetch User Profile (Need username for member list)
+    user_ref = db.collection(USERS_PROFILE_COLLECTION_PATH).document(creator_id)
+    user_doc = user_ref.get()
+    if not user_doc.exists:
+        raise HTTPException(status_code=404, detail="Creator not found. Please log in again.")
+    
+    user_profile = user_doc.to_dict()
+    creator_username = user_profile.get("username", f"User {creator_id[:4]}...")
 
-    # Generate a unique 6-digit code
-    code = generate_league_code()
+    # 2. Generate a unique 6-digit code (checks Firestore)
+    code = generate_league_code(db) 
 
     new_league = {
         "code": code,
@@ -590,14 +666,19 @@ async def create_league(league_data: LeagueCreation):
         "start_date": league_data.start_date,
         "owner_id": creator_id,
         "members": [
-            {"telegram_id": creator_id, "league_points": 0}
-        ]
+            {"telegram_id": creator_id, "league_points": 0, "username": creator_username}
+        ],
+        "member_ids": [creator_id] # Helper list for quick lookups
     }
     
-    league_db[code] = new_league
+    # 3. Save the league to persistent Firestore
+    league_ref = db.collection(LEAGUES_COLLECTION_PATH).document(code)
+    league_ref.set(new_league)
     
-    # Add league to creator's profile
-    user_db[creator_id]["leagues"][code] = 0 # Initialize with 0 points
+    # 4. Update the creator's profile in Firestore (Add league reference)
+    user_profile["leagues"] = user_profile.get("leagues", {})
+    user_profile["leagues"][code] = 0 # Initialize with 0 points
+    user_ref.update({"leagues": user_profile["leagues"]})
     
     return {
         "status": "success",
@@ -607,34 +688,51 @@ async def create_league(league_data: LeagueCreation):
     }
 
 @app.post("/league/join")
-async def join_league(join_data: LeagueJoin):
-    """
-    Allows a user to join a private league via code or a public league via discovery.
-    """
+async def join_league(join_data: LeagueJoin, db: FirestoreClient = Depends(get_database)):
+    """Allows a user to join a league, updating both user and league documents in Firestore."""
     user_id = join_data.telegram_id
-    code = join_data.code.upper() # Ensure case-insensitivity for the code
+    code = join_data.code.upper() 
+
+    # 1. Fetch User Profile
+    user_ref = db.collection(USERS_PROFILE_COLLECTION_PATH).document(user_id)
+    user_doc = user_ref.get()
+    if not user_doc.exists:
+        raise HTTPException(status_code=404, detail="User not found. Please log in again.")
+    user_profile = user_doc.to_dict()
+    joiner_username = user_profile.get("username", f"User {user_id[:4]}")
+
+    # 2. Fetch League Document
+    league_ref = db.collection(LEAGUES_COLLECTION_PATH).document(code)
+    league_doc = league_ref.get()
     
-    if user_id not in user_db:
-        raise HTTPException(status_code=404, detail="User not found.")
-        
-    if code not in league_db:
+    if not league_doc.exists:
         raise HTTPException(status_code=404, detail="League code is invalid or expired.")
 
-    league = league_db[code]
+    league = league_doc.to_dict()
+    members = league.get("members", [])
+    member_ids = league.get("member_ids", [])
     
     # Check if league is full
-    if len(league["members"]) >= league["member_limit"]:
-        raise HTTPException(status_code=403, detail="League is full. The join code has expired.")
+    if len(members) >= league.get("member_limit", 50):
+        raise HTTPException(status_code=403, detail="League is full.")
         
     # Check if user is already a member
-    if code in user_db[user_id]["leagues"]:
-        return {"status": "success", "message": "You are already a member of this league."}
+    if user_id in member_ids:
+         return {"status": "success", "message": "You are already a member of this league."}
         
-    # Add user to league
-    league["members"].append({"telegram_id": user_id, "league_points": 0})
+    # 3. Perform Updates
     
-    # Add league to user's profile
-    user_db[user_id]["leagues"][code] = 0
+    # Add user to league (Denormalize username)
+    members.append({"telegram_id": user_id, "league_points": 0, "username": joiner_username})
+    member_ids.append(user_id)
+    
+    # Add league to user's persistent profile
+    user_profile["leagues"] = user_profile.get("leagues", {})
+    user_profile["leagues"][code] = 0
+    
+    # 4. Save Changes to Firestore
+    league_ref.update({"members": members, "member_ids": member_ids})
+    user_ref.update({"leagues": user_profile["leagues"]})
     
     return {
         "status": "success",
@@ -643,36 +741,41 @@ async def join_league(join_data: LeagueJoin):
     }
 
 @app.post("/league/my_leagues")
-async def get_my_leagues(user_request: TelegramID):
-    """
-    Returns the list of leagues the user belongs to with rank and details.
-    """
+async def get_my_leagues(user_request: TelegramID, db: FirestoreClient = Depends(get_database)):
+    """Returns the list of leagues the user belongs to, fetching data from Firestore."""
     user_id = user_request.telegram_id
-    if user_id not in user_db:
+    
+    # 1. Fetch User Profile to get league list
+    user_ref = db.collection(USERS_PROFILE_COLLECTION_PATH).document(user_id)
+    user_doc = user_ref.get()
+    if not user_doc.exists:
         raise HTTPException(status_code=404, detail="User not found.")
         
+    user_profile = user_doc.to_dict()
+    my_league_codes = user_profile.get("leagues", {}).keys()
     my_leagues_list = []
     
-    for code in user_db[user_id]["leagues"].keys():
-        if code in league_db:
-            league = league_db[code]
+    # 2. Batch fetch league details
+    for code in my_league_codes:
+        league_ref = db.collection(LEAGUES_COLLECTION_PATH).document(code)
+        league_doc = league_ref.get()
+        
+        if league_doc.exists:
+            league = league_doc.to_dict()
+            members = league.get("members", [])
             
-            # 1. Calculate Rank (VERY IMPORTANT for the frontend display)
-            # Sort members by points descending
-            sorted_members = sorted(league["members"], key=lambda m: m["league_points"], reverse=True)
+            # Calculate Rank
+            sorted_members = sorted(members, key=lambda m: m.get("league_points", 0), reverse=True)
+            user_rank = next((i + 1 for i, m in enumerate(sorted_members) if m.get("telegram_id") == user_id), "N/A")
             
-            # Find the user's index in the sorted list and add 1 for rank
-            user_rank = next((i + 1 for i, m in enumerate(sorted_members) if m["telegram_id"] == user_id), "N/A")
-            
-            # 2. Extract needed details for the "My Leagues" display
             my_leagues_list.append({
                 "league_avatar_url": league.get("avatar_url"),
                 "league_name": league["name"],
                 "league_description": league["description"],
                 "user_rank": user_rank,
-                "user_points": user_db[user_id]["leagues"][code],
-                "member_count": len(league["members"]),
-                "is_owner": league["owner_id"] == user_id, # Frontend uses this to display the "Owner" tag
+                "user_points": user_profile["leagues"].get(code, 0),
+                "member_count": len(members),
+                "is_owner": league.get("owner_id") == user_id,
                 "code": code
             })
             
@@ -682,13 +785,15 @@ async def get_my_leagues(user_request: TelegramID):
     }
     
 @app.get("/league/discover")
-async def discover_leagues():
-    """
-    Returns 3 random public leagues for the "Discover Leagues" section.
-    """
-    public_leagues = [
-        l for l in league_db.values() if not l["is_private"]
-    ]
+async def discover_leagues(db: FirestoreClient = Depends(get_database)):
+    """Returns 3 random public leagues, querying from Firestore."""
+    
+    # Query for public leagues (where is_private is False)
+    # Note: Firestore query is limited. We'll fetch a small set and randomly select from that.
+    query = db.collection(LEAGUES_COLLECTION_PATH).where("is_private", "==", False).limit(10)
+    public_leagues_docs = query.stream()
+    
+    public_leagues = [doc.to_dict() for doc in public_leagues_docs]
     
     if not public_leagues:
         return {"status": "success", "public_leagues": [], "message": "No public leagues available."}
@@ -704,8 +809,8 @@ async def discover_leagues():
             "league_name": league["name"],
             "league_description": league["description"],
             "league_difficulty": league["difficulty"],
-            "member_count": len(league["members"]),
-            "join_code": league["code"] # Needed for the 'Join' button
+            "member_count": len(league.get("members", [])),
+            "join_code": league["code"] 
         })
         
     return {
@@ -714,16 +819,22 @@ async def discover_leagues():
     }
 
 @app.post("/league/search")
-async def search_leagues(search_data: LeagueSearch):
-    """
-    Allows users to search for public leagues by name.
-    """
-    query = search_data.query.strip().lower()
+async def search_leagues(search_data: LeagueSearch, db: FirestoreClient = Depends(get_database)):
+    """Allows users to search for public leagues by name, using Firestore."""
+    query_text = search_data.query.strip()
     
-    # Filter for public leagues matching the query
+    # Note: Full-text search is complex in Firestore. 
+    # We will use an equality filter for a simple, case-insensitive match on exact names 
+    # or rely on the frontend to search through a list of public leagues if the dataset is small.
+    # For now, we fetch all public leagues and filter locally (scalable only for small apps).
+    
+    all_public_leagues = []
+    public_query = db.collection(LEAGUES_COLLECTION_PATH).where("is_private", "==", False).stream()
+    all_public_leagues = [doc.to_dict() for doc in public_query]
+    
     matching_leagues = [
-        l for l in league_db.values() 
-        if not l["is_private"] and query in l["name"].lower()
+        l for l in all_public_leagues
+        if query_text.lower() in l["name"].lower()
     ]
     
     # Format the data for the frontend display (similar to discover)
@@ -734,7 +845,7 @@ async def search_leagues(search_data: LeagueSearch):
             "league_name": league["name"],
             "league_description": league["description"],
             "league_difficulty": league["difficulty"],
-            "member_count": len(league["members"]),
+            "member_count": len(league.get("members", [])),
             "join_code": league["code"]
         })
 
@@ -743,61 +854,64 @@ async def search_leagues(search_data: LeagueSearch):
         "search_results": search_results
     }
     
-    # =======================================================================
-# >>> NEW ENDPOINT TO FETCH A SPECIFIC LEAGUE'S LEADERBOARD <<<
-# UPDATED to use 'league_id' instead of 'code' in the request model
-# =======================================================================
 @app.post("/api/league/leaderboard")
-async def get_league_leaderboard(request_data: LeagueDetailsRequest):
+async def get_league_leaderboard(request_data: LeagueDetailsRequest, db: FirestoreClient = Depends(get_database)):
     """
-    Fetches the full member list for a specific league, sorted by points (the leaderboard).
-    The user must be a member or the league must be public.
+    Fetches the full member list for a specific league from persistent Firestore storage.
     """
     user_id = request_data.telegram_id
-    # IMPORTANT FIX: Extract the ID using the frontend's field name: league_id
-    code = request_data.league_id.upper() 
+    code = request_data.league_id.upper()
+    
+    league_ref = db.collection(LEAGUES_COLLECTION_PATH).document(code)
+    
+    try:
+        # Check Firestore for the league document
+        league_doc = league_ref.get()
+        
+        if not league_doc.exists:
+            # This check now points to persistent storage, permanently fixing the 404 issue!
+            raise HTTPException(status_code=404, detail="League not found in persistent database.")
 
-    if code not in league_db:
-        raise HTTPException(status_code=404, detail="League not found.")
+        league = league_doc.to_dict()
 
-    league = league_db[code]
+    except Exception as e:
+        print(f"Database error fetching league {code}: {e}")
+        raise HTTPException(status_code=500, detail="An internal server error occurred during data retrieval.")
 
     # Authorization Check: Ensure the user is a member of the league (or the league is public)
-    is_member = any(member["telegram_id"] == user_id for member in league["members"])
-    if league["is_private"] and not is_member:
+    member_ids = league.get("member_ids", [])
+    is_member = user_id in member_ids
+    
+    if league.get("is_private") and not is_member:
         raise HTTPException(status_code=403, detail="Not authorized to view this private league's leaderboard.")
 
-    # 1. Sort members to create the official leaderboard
+    # 1. Sort members (using denormalized points)
+    members: List[Dict[str, Any]] = league.get("members", [])
     leaderboard = sorted(
-        league["members"], 
-        key=lambda m: m["league_points"], 
+        members, 
+        key=lambda m: m.get("league_points", 0), 
         reverse=True
     )
 
-    # 2. Enhance the output for the frontend (attach usernames and rank)
+    # 2. Format output for the frontend
     leaderboard_with_names = []
     for rank, member in enumerate(leaderboard, 1):
-        member_id = member["telegram_id"]
-        # Retrieve username from the global user_db
-        username = user_db.get(member_id, {}).get("username", f"User {member_id[:4]}...")
+        member_id = member.get("telegram_id")
         
         leaderboard_with_names.append({
             "rank": rank,
             "telegram_id": member_id,
-            "username": username,
-            "points": member["league_points"],
+            "username": member.get("username", f"User {member_id[:4]}..."), # Use denormalized username
+            "points": member.get("league_points", 0),
             "is_current_user": member_id == user_id
         })
 
     return {
         "status": "success",
-        "league_name": league["name"],
+        "league_name": league.get("name", "Unknown League"),
         "league_code": code,
         "leaderboard": leaderboard_with_names
     }
-# =======================================================================
 
-    # 2. STATIC FILES MOUNT (This is where the magic happens)
-# This serves the index.html file from the 'static' directory when the user visits the root URL (/)
-# It is placed AFTER CORS but BEFORE your API routes.
+# --- STATIC FILES MOUNT ---
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
