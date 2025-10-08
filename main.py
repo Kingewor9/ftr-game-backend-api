@@ -4,7 +4,7 @@ import json
 import asyncio 
 from urllib.parse import unquote_plus
 from fastapi import FastAPI, Request, HTTPException, Body
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, BeforeValidator
 from bson import ObjectId # <-- IMPORTANT: Import ObjectId from bson
 from urllib.parse import unquote_plus, parse_qsl 
 from datetime import datetime, timedelta
@@ -14,7 +14,7 @@ import logging
 import string
 from fastapi.middleware.cors import CORSMiddleware 
 from fastapi.staticfiles import StaticFiles
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, Annotated
 from motor.motor_asyncio import AsyncIOMotorClient 
 
 # Configure logging
@@ -47,6 +47,19 @@ league_collection: Any = None
 # =======================================================================
 # >>> FIX 1: BASE MODEL FOR MONGODB (OBJECTID TO STRING SERIALIZATION) <<<
 # =======================================================================
+
+# -----------------
+# CRITICAL NEW FIX: Custom type definition for Pydantic V2
+# -----------------
+def convert_objectid_to_str(v: Any) -> str:
+    """Converts MongoDB ObjectId to a string before Pydantic validation."""
+    if isinstance(v, ObjectId):
+        return str(v)
+    raise ValueError(f"Expected ObjectId or str, got {type(v)}")
+
+# Define the custom PyObjectId type alias
+PyObjectId = Annotated[str, BeforeValidator(convert_objectid_to_str)]
+
 class MongoBaseModel(BaseModel):
     """
     Base Pydantic model configured for MongoDB's unique data types.
