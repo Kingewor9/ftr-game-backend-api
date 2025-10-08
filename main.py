@@ -1,10 +1,11 @@
 import hmac
 import hashlib
 import json
-import asyncio # <-- NEW: Required for asynchronous operations (like updating leagues)
+import asyncio 
 from urllib.parse import unquote_plus
 from fastapi import FastAPI, Request, HTTPException, Body
 from pydantic import BaseModel, Field
+from bson import ObjectId # <-- IMPORTANT: Import ObjectId from bson
 from urllib.parse import unquote_plus, parse_qsl 
 from datetime import datetime, timedelta
 import os
@@ -13,8 +14,8 @@ import logging
 import string
 from fastapi.middleware.cors import CORSMiddleware 
 from fastapi.staticfiles import StaticFiles
-from typing import Optional, Any
-from motor.motor_asyncio import AsyncIOMotorClient # <-- NEW: MongoDB Driver
+from typing import Optional, Any, Dict
+from motor.motor_asyncio import AsyncIOMotorClient 
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -43,11 +44,31 @@ client: Optional[AsyncIOMotorClient] = None
 user_profiles_collection: Any = None
 league_collection: Any = None
 
+# =======================================================================
+# >>> FIX 1: BASE MODEL FOR MONGODB (OBJECTID TO STRING SERIALIZATION) <<<
+# =======================================================================
+class MongoBaseModel(BaseModel):
+    """
+    Base Pydantic model configured for MongoDB's unique data types.
+    - Handles serializing ObjectId to string.
+    """
+
+    class Config:
+        # Teach Pydantic how to convert MongoDB's ObjectId to a string during JSON serialization
+        json_encoders = {
+            ObjectId: str
+        }
+        # Allow Pydantic to populate fields using aliases (e.g., mapping '_id' to 'id')
+        populate_by_name = True
+        # Allow Pydantic to read data from non-dict sources
+        from_attributes = True
+
+
 # --- Pydantic Data Models ---
 
 # Pydantic Model representing the data structure in MongoDB
-class UserProfileDB(BaseModel):
-    # Field(..., alias="_id") maps MongoDB's internal ID to a Python field (only used internally)
+class UserProfileDB(MongoBaseModel): # <-- FIX 2: Now inherits from MongoBaseModel
+    # Field(..., alias="_id") maps MongoDB's internal ID to a Python field
     id: Optional[str] = Field(None, alias="_id") 
     telegram_id: str
     username: str
@@ -141,9 +162,8 @@ daily_quiz_state = {
 }
 user_quiz_progress = {} 
 
-# --- Helper Functions ---
+# --- Helper Functions (UNCHANGED) ---
 
-# !!! CORRECTED AUTHENTICATION LOGIC !!! (UNCHANGED)
 def validate_telegram_data(init_data: str) -> dict:
     """
     Validates the hash of the received Telegram Mini App init data.
@@ -216,11 +236,11 @@ async def generate_league_code(length=6):
         if not await league_collection.find_one({"code": code}):
             return code
 
-# --- API Setup ---
+# --- API Setup (UNCHANGED) ---
 app = FastAPI()
 
 # =======================================================================
-# >>> MONGODB CONNECTION HOOKS (NEW) <<<
+# >>> MONGODB CONNECTION HOOKS (UNCHANGED) <<<
 # =======================================================================
 
 @app.on_event("startup")
@@ -252,7 +272,7 @@ async def shutdown_db_client():
         logger.info("MongoDB connection closed.")
 
 # =======================================================================
-# >>> CRITICAL CORS FIX <<<
+# >>> CRITICAL CORS FIX (UNCHANGED) <<<
 # =======================================================================
 origins = ["*"]
 app.add_middleware(
@@ -264,7 +284,7 @@ app.add_middleware(
 )
 
 # =======================================================================
-# >>> HEALTH CHECK ENDPOINT <<<
+# >>> HEALTH CHECK ENDPOINT (UNCHANGED) <<<
 # =======================================================================
 @app.get("/api/status")
 async def health_check():
@@ -289,9 +309,9 @@ async def telegram_login(request: Request):
         user_profile_doc = await user_profiles_collection.find_one({"telegram_id": telegram_id})
 
         if user_profile_doc:
-            # User exists
+            # User exists. MongoBaseModel now handles '_id' conversion to 'id'.
             user_profile = UserProfileDB(**user_profile_doc).dict(by_alias=True)
-            user_profile.pop('_id', None) # Remove MongoDB internal ID for clean response
+            # user_profile.pop('_id', None) # <-- Removed: MongoBaseModel handles this.
             logger.info(f"User authenticated: {telegram_id}")
         else:
             # New User, create profile
@@ -316,9 +336,13 @@ async def telegram_login(request: Request):
             }
             
             # --- MongoDB Write Operation (Insert) ---
-            await user_profiles_collection.insert_one(new_user_data)
+            insert_result = await user_profiles_collection.insert_one(new_user_data)
             logger.info(f"New user created: {telegram_id}")
-            user_profile = new_user_data
+            
+            # FIX 3: Add the generated ObjectId back into the dictionary 
+            # so Pydantic can convert it to a string 'id' before returning.
+            new_user_data["_id"] = insert_result.inserted_id 
+            user_profile = UserProfileDB(**new_user_data).dict(by_alias=True)
             
         return {
             "status": "success",
@@ -350,8 +374,9 @@ async def edit_profile(profile_data: UserProfileEdit):
         
     # Fetch updated profile to send back
     updated_doc = await user_profiles_collection.find_one({"telegram_id": user_id})
+    # FIX: MongoBaseModel handles the serialization from here
     updated_profile = UserProfileDB(**updated_doc).dict(by_alias=True)
-    updated_profile.pop('_id', None)
+    # updated_profile.pop('_id', None) # <-- Removed: MongoBaseModel handles this.
     
     return {
         "status": "success",
@@ -374,8 +399,9 @@ async def update_preferences(prefs_data: UserPreferencesUpdate):
         
     # Fetch updated profile
     updated_doc = await user_profiles_collection.find_one({"telegram_id": user_id})
+    # FIX: MongoBaseModel handles the serialization from here
     updated_profile = UserProfileDB(**updated_doc).dict(by_alias=True)
-    updated_profile.pop('_id', None)
+    # updated_profile.pop('_id', None) # <-- Removed: MongoBaseModel handles this.
     
     return {
         "status": "success",
@@ -383,7 +409,7 @@ async def update_preferences(prefs_data: UserPreferencesUpdate):
         "user_profile": updated_profile
     }
 
-# --- QUIZ ADMIN/GAMEPLAY ENDPOINTS ---
+# --- QUIZ ADMIN/GAMEPLAY ENDPOINTS (UNCHANGED) ---
 
 @app.post("/admin/set_daily_quiz")
 async def set_daily_quiz(quiz_data: DailyQuizData, request: Request):
@@ -607,7 +633,7 @@ async def finalize_quiz_results(user_request: TelegramID):
 
     # 6. Cleanup and Return
     del user_quiz_progress[telegram_id]
-    user_profile.pop('_id', None)
+    # user_profile.pop('_id', None) # <-- Removed: MongoBaseModel handles this.
     
     return {
         "status": "complete",
@@ -647,15 +673,17 @@ async def create_league(league_data: LeagueCreation):
     }
     
     # --- MongoDB Write (Insert League) ---
-    await league_collection.insert_one(new_league)
-    
+    insert_result = await league_collection.insert_one(new_league)
+    new_league["_id"] = insert_result.inserted_id # Add the generated ID
+
     # --- MongoDB Write (Update Creator's profile) ---
     await user_profiles_collection.update_one(
         {"telegram_id": creator_id},
         {"$set": {f"leagues.{code}": 0}}
     )
     
-    new_league.pop('_id', None) 
+    # Use MongoBaseModel-like logic to ensure _id is converted to a string 'id' in the response
+    new_league["id"] = str(new_league.pop('_id'))
     
     return {
         "status": "success",
@@ -702,7 +730,9 @@ async def join_league(join_data: LeagueJoin):
     )
     
     updated_league_doc = await league_collection.find_one({"code": code})
-    updated_league_doc.pop('_id', None)
+    
+    # FIX: Convert ObjectId to string before returning
+    updated_league_doc["id"] = str(updated_league_doc.pop('_id'))
     
     return {
         "status": "success",
@@ -719,6 +749,7 @@ async def get_my_leagues(user_request: TelegramID):
     if not user_profile_doc:
         raise HTTPException(status_code=404, detail="User not found.")
         
+    # user_profile is used for league codes and scores, not direct serialization, so no change needed here.
     user_profile = UserProfileDB(**user_profile_doc).dict(by_alias=True)
     
     my_leagues_list = []
