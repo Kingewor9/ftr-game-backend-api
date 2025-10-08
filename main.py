@@ -4,7 +4,7 @@ import json
 import asyncio 
 from urllib.parse import unquote_plus
 from fastapi import FastAPI, Request, HTTPException, Body
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from bson import ObjectId # <-- IMPORTANT: Import ObjectId from bson
 from urllib.parse import unquote_plus, parse_qsl 
 from datetime import datetime, timedelta
@@ -50,19 +50,25 @@ league_collection: Any = None
 class MongoBaseModel(BaseModel):
     """
     Base Pydantic model configured for MongoDB's unique data types.
-    - Handles serializing ObjectId to string.
+    - Handles serializing ObjectId to string and allows Pydantic to accept 
+      the raw ObjectId type from the database for the aliased _id field.
     """
-
-    class Config:
+    
+    # Use Pydantic V2's model_config to replace the V1 Config class
+    model_config = ConfigDict(
+        # CRITICAL FIX: Allows Pydantic to accept the raw ObjectId type 
+        # from the database, which is key for deserialization.
+        arbitrary_types_allowed=True, 
+        
         # Teach Pydantic how to convert MongoDB's ObjectId to a string during JSON serialization
         json_encoders = {
             ObjectId: str
-        }
+        },
         # Allow Pydantic to populate fields using aliases (e.g., mapping '_id' to 'id')
-        populate_by_name = True
+        populate_by_name = True,
         # Allow Pydantic to read data from non-dict sources
-        from_attributes = True
-
+        from_attributes = True,
+    )
 
 # --- Pydantic Data Models ---
 
