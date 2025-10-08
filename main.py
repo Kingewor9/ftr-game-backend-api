@@ -14,7 +14,7 @@ import logging
 import string
 from fastapi.middleware.cors import CORSMiddleware 
 from fastapi.staticfiles import StaticFiles
-from typing import Optional, Any, Dict, Annotated
+from typing import Optional, Any, Dict, Annotated, Literal
 from motor.motor_asyncio import AsyncIOMotorClient 
 
 # Configure logging
